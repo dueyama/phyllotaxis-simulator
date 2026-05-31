@@ -8,7 +8,65 @@ const GOLDEN_ANGLE = 360 * (1 - 1 / GOLDEN_RATIO);
 const DISPLAY_RADIUS_SCALE = 0.018333333333333333;
 const PARTICLE_CULL_RADIUS = 1.2 / DISPLAY_RADIUS_SCALE;
 const DEFAULT_WAIT_MS = 16;
-const G_PRESETS = [3, 2, 1.5, 1, 0.7, 0.5, 0.2, 0.14, 0.044];
+const G_PRESETS = [3, 0.7, 0.5, 0.14, 0.044];
+const COPY = {
+  ja: {
+    title: "葉序シミュレーター",
+    metaDescription:
+      "Douady-Couderモデルに基づく葉序シミュレーター。反発ポテンシャル、発散角、左右の螺旋数を可視化します。",
+    headerKicker: "Douady-Couder simulator",
+    status: {
+      idle: "未開始",
+      spirals: "螺旋表示",
+      running: "計算中",
+      paused: "一時停止",
+    },
+    metrics: {
+      divergence: "発散角",
+      spirals: "螺旋数",
+    },
+    controls: {
+      representativeG: "代表的なG",
+      continuous: "連続表示",
+      start: "最初から計算",
+      pause: "一時停止",
+      resume: "再開",
+      reset: "リセット",
+      draw: "螺旋を描く",
+      potential: "ポテンシャル",
+      displayInterval: "表示間隔",
+      goldenAngle: "黄金角",
+    },
+  },
+  en: {
+    title: "Phyllotaxis Simulator",
+    metaDescription:
+      "An interactive phyllotaxis simulator based on the Douady-Couder model, visualizing repulsive potential, divergence angle, and parastichy counts.",
+    headerKicker: "Douady-Couder simulator",
+    status: {
+      idle: "Idle",
+      spirals: "Spirals shown",
+      running: "Running",
+      paused: "Paused",
+    },
+    metrics: {
+      divergence: "Divergence",
+      spirals: "Spirals",
+    },
+    controls: {
+      representativeG: "Representative G values",
+      continuous: "Continuous motion",
+      start: "Start over",
+      pause: "Pause",
+      resume: "Resume",
+      reset: "Reset",
+      draw: "Draw spirals",
+      potential: "Potential",
+      displayInterval: "Display interval",
+      goldenAngle: "Golden angle",
+    },
+  },
+};
 const SCHEDULE_PRESETS = {
   g3to07: {
     label: "G=3.0 -> 0.7",
@@ -17,7 +75,6 @@ const SCHEDULE_PRESETS = {
     target: 0.7,
     holdBirths: 120,
     rampBirths: 680,
-    total: 900,
   },
   g07to05: {
     label: "G=0.7 -> 0.5",
@@ -26,8 +83,6 @@ const SCHEDULE_PRESETS = {
     target: 0.5,
     holdBirths: 0,
     rampBirths: 500,
-    extensionBirths: 700,
-    requiresRecordedState: true,
   },
   g05to014: {
     label: "G=0.5 -> 0.14",
@@ -36,8 +91,6 @@ const SCHEDULE_PRESETS = {
     target: 0.14,
     holdBirths: 0,
     rampBirths: 1400,
-    extensionBirths: 2200,
-    requiresRecordedState: true,
   },
   g014to0044: {
     label: "G=0.14 -> 0.044",
@@ -46,20 +99,19 @@ const SCHEDULE_PRESETS = {
     target: 0.044,
     holdBirths: 0,
     rampBirths: 1800,
-    extensionBirths: 2800,
-    requiresRecordedState: true,
   },
 };
 
 const DEFAULTS = {
   initialRadius: 5,
   speed: 0.25,
-  T: 2,
+  T: 60,
   schedule: "fixed",
-  total: 900,
   N: 36000,
   M: 15,
   waitMs: DEFAULT_WAIT_MS,
+  dt: 1,
+  continuousMotion: true,
 };
 
 function clamp(value, min, max) {
@@ -130,6 +182,25 @@ function scheduledG(settings, born) {
   return preset.start + (preset.target - preset.start) * eased;
 }
 
+function targetReachedBorn(settings) {
+  const preset = SCHEDULE_PRESETS[settings.schedule];
+  if (!preset) return null;
+  const holdBirths = settings.rampStartBorn ?? preset.holdBirths;
+  return holdBirths + preset.rampBirths;
+}
+
+function visibleParticlesReplaced(state, reachedBorn) {
+  if (!state || reachedBorn === null) return false;
+  const visibleParticles = state.particles.filter(
+    (particle) => DISPLAY_RADIUS_SCALE * particle.radius <= 1,
+  );
+  return (
+    state.born > reachedBorn &&
+    visibleParticles.length > 0 &&
+    visibleParticles.every((particle) => particle.id >= reachedBorn)
+  );
+}
+
 function growthPerBirthAt(settings, born) {
   return scheduledG(settings, born) * settings.initialRadius;
 }
@@ -143,8 +214,42 @@ function formatGValue(g) {
   return g.toFixed(g >= 1 ? 1 : 2);
 }
 
+function browserLocale() {
+  if (typeof navigator === "undefined") return "en";
+  const languages = navigator.languages?.length ? navigator.languages : [navigator.language];
+  return languages.some((language) => language?.toLowerCase().startsWith("ja"))
+    ? "ja"
+    : "en";
+}
+
+function ModelDescription({ locale }) {
+  if (locale === "ja") {
+    return (
+      <>
+        論文[1]のモデルでは、原基は中心リング R<sub>0</sub> 上に発生し、
+        既存原基からの反発ポテンシャル Σ1/d<sup>4</sup> が最小になる角度を選びます。
+        既存原基は速度 V<sub>0</sub> で外向きに移動し、
+        G = V<sub>0</sub>T/R<sub>0</sub> が無次元の制御量です。
+      </>
+    );
+  }
+
+  return (
+    <>
+      In the model of paper [1], primordia appear on a central ring R<sub>0</sub> at the
+      angle where the repulsive potential Σ1/d<sup>4</sup> from existing primordia is
+      minimized. Existing primordia move outward at velocity V<sub>0</sub>, and
+      G = V<sub>0</sub>T/R<sub>0</sub> is the dimensionless control parameter.
+    </>
+  );
+}
+
+function setTextMeta(selector, content) {
+  const element = document.querySelector(selector);
+  if (element) element.setAttribute("content", content);
+}
+
 function createInitialState(settings) {
-  const growthPerBirth = growthPerBirthAt(settings, 1);
   return {
     particles: [
       {
@@ -152,29 +257,26 @@ function createInitialState(settings) {
         theta: 0,
         cosTheta: 1,
         sinTheta: 0,
-        radius: settings.initialRadius + growthPerBirth,
+        radius: settings.initialRadius,
       },
     ],
     angles: [0],
     divergences: [],
     born: 1,
-    finished: false,
+    timeSinceBirth: 0,
   };
 }
 
-function cloneState(state, overrides = {}) {
-  return {
-    particles: state.particles.map((particle) => ({ ...particle })),
-    angles: [...state.angles],
-    divergences: [...state.divergences],
-    born: state.born,
-    finished: state.finished,
-    ...overrides,
-  };
+function advectParticles(state, distance) {
+  for (const particle of state.particles) {
+    particle.radius += distance;
+  }
+  state.particles = state.particles.filter(
+    (particle) => particle.radius <= PARTICLE_CULL_RADIUS,
+  );
 }
 
 function birthOne(state, settings, samples) {
-  const growthPerBirth = growthPerBirthAt(settings, state.born);
   const recent = state.particles.slice(-settings.M);
   let bestTheta = 0;
   let bestEnergy = Number.POSITIVE_INFINITY;
@@ -203,33 +305,58 @@ function birthOne(state, settings, samples) {
     radius: settings.initialRadius,
   });
   state.born += 1;
-
-  for (const particle of state.particles) {
-    particle.radius += growthPerBirth;
-  }
-  state.particles = state.particles.filter(
-    (particle) => particle.radius <= PARTICLE_CULL_RADIUS,
-  );
 }
 
-function advanceState(current, settings, samples) {
+function advanceContinuousState(current, settings, samples, deltaTime) {
   const next = {
     particles: current.particles.map((particle) => ({ ...particle })),
     angles: [...current.angles],
     divergences: [...current.divergences],
     born: current.born,
-    finished: false,
+    timeSinceBirth: current.timeSinceBirth ?? 0,
+  };
+
+  let remainingTime = deltaTime;
+  let birthsThisTick = 0;
+  const maxBirthsPerTick = Math.max(1, Math.floor(120000 / settings.N));
+
+  while (remainingTime > 0.000001) {
+    const G = scheduledG(settings, next.born);
+    const T = Math.max(tForG(settings, G), 0.000001);
+    const timeToBirth = Math.max(T - next.timeSinceBirth, 0);
+    const stepTime = Math.min(remainingTime, timeToBirth);
+
+    if (stepTime > 0) {
+      advectParticles(next, settings.speed * stepTime);
+      next.timeSinceBirth += stepTime;
+      remainingTime -= stepTime;
+    }
+
+    if (next.timeSinceBirth + 0.000001 < T) break;
+    if (birthsThisTick >= maxBirthsPerTick) break;
+
+    birthOne(next, settings, samples);
+    next.timeSinceBirth = 0;
+    birthsThisTick += 1;
+  }
+
+  return next;
+}
+
+function advanceDiscreteState(current, settings, samples) {
+  const next = {
+    particles: current.particles.map((particle) => ({ ...particle })),
+    angles: [...current.angles],
+    divergences: [...current.divergences],
+    born: current.born,
+    timeSinceBirth: 0,
   };
 
   for (let index = 0; index < settings.skip; index += 1) {
-    if (next.born >= settings.total) {
-      next.finished = true;
-      break;
-    }
+    advectParticles(next, growthPerBirthAt(settings, next.born));
     birthOne(next, settings, samples);
   }
 
-  next.finished = next.born >= settings.total;
   return next;
 }
 
@@ -512,7 +639,7 @@ function SimulationView({ points, spirals, initialRadius, showSpirals }) {
 
 function NumberField({ label, value, min, max, step, onChange, format = (number) => number }) {
   return (
-    <label className="control">
+    <label className="control" data-control={label}>
       <span>{label}</span>
       <input
         type="range"
@@ -527,34 +654,38 @@ function NumberField({ label, value, min, max, step, onChange, format = (number)
   );
 }
 
-function statusText(state, running, showSpirals) {
-  if (!state) return "未開始";
-  if (showSpirals) return "螺旋表示";
-  if (running) return "計算中";
-  if (state.finished) return "計算完了";
-  return "一時停止";
+function ToggleField({ label, checked, onChange }) {
+  return (
+    <label className="toggle-control" data-control={label}>
+      <input
+        type="checkbox"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span>{label}</span>
+    </label>
+  );
+}
+
+function statusText(state, running, showSpirals, text) {
+  if (!state) return text.status.idle;
+  if (showSpirals) return text.status.spirals;
+  if (running) return text.status.running;
+  return text.status.paused;
 }
 
 function App() {
+  const locale = useMemo(() => browserLocale(), []);
+  const text = COPY[locale];
   const [settings, setSettings] = useState(DEFAULTS);
-  const [state, setState] = useState(null);
-  const [running, setRunning] = useState(false);
+  const [state, setState] = useState(() => createInitialState(DEFAULTS));
+  const [running, setRunning] = useState(true);
   const [showSpirals, setShowSpirals] = useState(false);
-  const [recordedBase, setRecordedBase] = useState(null);
-  const [recordedG05Base, setRecordedG05Base] = useState(null);
-  const [recordedG014Base, setRecordedG014Base] = useState(null);
   const samples = useMemo(() => sampleRing(settings.N), [settings.N]);
   const currentBorn = state?.born ?? 0;
   const G = scheduledG(settings, currentBorn);
   const currentT = tForG(settings, G);
-  const growthPerBirth = G * settings.initialRadius;
-  const modelSettings = useMemo(
-    () => ({
-      ...settings,
-      skip: 1,
-    }),
-    [settings],
-  );
+  const modelSettings = useMemo(() => ({ ...settings, skip: 1 }), [settings]);
   const points = useMemo(() => visiblePoints(state, DISPLAY_RADIUS_SCALE), [state]);
   const birthDisplayRadius = DISPLAY_RADIUS_SCALE * settings.initialRadius;
   const preferredPair = useMemo(() => preferredSpiralPair(G), [G]);
@@ -566,138 +697,52 @@ function App() {
     [points, showSpirals, birthDisplayRadius, preferredPair],
   );
   const divergence = currentDivergenceDegrees(state);
-  const status = statusText(state, running, showSpirals);
-  const progress = state ? (state.born / settings.total) * 100 : 0;
+  const status = statusText(state, running, showSpirals, text);
+
+  useEffect(() => {
+    document.documentElement.lang = locale;
+    document.title = text.title;
+    setTextMeta('meta[name="description"]', text.metaDescription);
+  }, [locale, text]);
 
   useEffect(() => {
     if (!running) return undefined;
 
-    let lastTick = window.performance.now();
-    let accumulatedSteps = 0;
     const timer = window.setInterval(() => {
-      const now = window.performance.now();
-      accumulatedSteps += (now - lastTick) / settings.waitMs;
-      lastTick = now;
-
-      const maxStepsPerTick = Math.max(1, Math.floor(120000 / settings.N));
-      const steps = Math.min(maxStepsPerTick, Math.floor(accumulatedSteps));
-      if (steps < 1) return;
-      accumulatedSteps -= steps;
-
       setState((current) => {
         if (!current) return current;
-        const next = advanceState(
-          current,
-          {
-            ...modelSettings,
-            skip: steps,
-          },
-          samples,
-        );
-        if (next.finished) setRunning(false);
+        const next = settings.continuousMotion
+          ? advanceContinuousState(current, modelSettings, samples, settings.dt)
+          : advanceDiscreteState(
+              current,
+              {
+                ...modelSettings,
+                skip: 1,
+              },
+              samples,
+            );
+        const reachedBorn = targetReachedBorn(modelSettings);
+        if (visibleParticlesReplaced(next, reachedBorn)) {
+          setRunning(false);
+          setShowSpirals(true);
+        }
         return next;
       });
     }, settings.waitMs);
 
     return () => window.clearInterval(timer);
-  }, [running, modelSettings, samples, settings.waitMs]);
-
-  useEffect(() => {
-    if (running || !state?.finished) return;
-
-    if (settings.schedule === "g3to07" && !recordedBase) {
-      setRecordedBase({
-        g: G,
-        settings: {
-          ...settings,
-          schedule: "fixed",
-          rampStartBorn: undefined,
-          total: state.born,
-          T: Number(tForG(settings, 0.7).toFixed(4)),
-        },
-        state: cloneState(state, { finished: false }),
-      });
-      setShowSpirals(true);
-      return;
-    }
-
-    if (settings.schedule === "g07to05" && !showSpirals) {
-      if (!recordedG05Base) {
-        setRecordedG05Base({
-          g: G,
-          settings: {
-            ...settings,
-            schedule: "fixed",
-            rampStartBorn: undefined,
-            total: state.born,
-            T: Number(tForG(settings, 0.5).toFixed(4)),
-          },
-          state: cloneState(state, { finished: false }),
-        });
-      }
-      setShowSpirals(true);
-      return;
-    }
-
-    if (settings.schedule === "g05to014" && !showSpirals) {
-      if (!recordedG014Base) {
-        setRecordedG014Base({
-          g: G,
-          settings: {
-            ...settings,
-            schedule: "fixed",
-            rampStartBorn: undefined,
-            total: state.born,
-            T: Number(tForG(settings, 0.14).toFixed(4)),
-          },
-          state: cloneState(state, { finished: false }),
-        });
-      }
-      setShowSpirals(true);
-      return;
-    }
-
-    if (settings.schedule === "g014to0044" && !showSpirals) {
-      setShowSpirals(true);
-    }
-  }, [
-    G,
-    recordedBase,
-    recordedG014Base,
-    recordedG05Base,
-    running,
-    settings,
-    showSpirals,
-    state,
-  ]);
+  }, [running, modelSettings, samples, settings.continuousMotion, settings.dt, settings.waitMs]);
 
   const update = (key, value) => {
-    setRunning(false);
-    setShowSpirals(false);
-    setState(null);
-    if (key !== "waitMs") {
-      setRecordedBase(null);
-      setRecordedG05Base(null);
-      setRecordedG014Base(null);
-    }
     setSettings((current) => ({
       ...current,
       [key]: value,
-      ...(key === "T" ? { schedule: "fixed" } : {}),
     }));
   };
 
   const start = () => {
     setShowSpirals(false);
-    if (settings.schedule === "g07to05" && recordedBase) {
-      setState(cloneState(recordedBase.state, { finished: false }));
-    } else if (settings.schedule === "g05to014" && recordedG05Base) {
-      setState(cloneState(recordedG05Base.state, { finished: false }));
-    } else if (settings.schedule === "g014to0044" && recordedG014Base) {
-      setState(cloneState(recordedG014Base.state, { finished: false }));
-    } else {
-      setState(createInitialState(modelSettings));
-    }
+    setState(createInitialState(modelSettings));
     setRunning(true);
   };
 
@@ -706,25 +751,20 @@ function App() {
   };
 
   const resume = () => {
-    if (state && !state.finished) {
+    if (state) {
       setShowSpirals(false);
       setRunning(true);
     }
   };
 
   const reset = () => {
-    setRunning(false);
     setShowSpirals(false);
-    setState(null);
+    setState(createInitialState(modelSettings));
+    setRunning(true);
   };
 
   const applyG = (targetG) => {
-    setRunning(false);
     setShowSpirals(false);
-    setRecordedBase(null);
-    setRecordedG05Base(null);
-    setRecordedG014Base(null);
-    setState(null);
     setSettings((current) => ({
       ...current,
       schedule: "fixed",
@@ -736,88 +776,15 @@ function App() {
   const applySchedulePreset = (scheduleKey) => {
     const preset = SCHEDULE_PRESETS[scheduleKey];
     if (!preset) return;
+    const rampStartBorn = (state?.born ?? 0) + preset.holdBirths;
 
-    setRunning(false);
     setShowSpirals(false);
-    setRecordedBase(null);
-    setRecordedG05Base(null);
-    setRecordedG014Base(null);
-    setState(null);
     setSettings((current) => ({
       ...current,
       schedule: scheduleKey,
-      rampStartBorn: undefined,
-      total: Math.max(current.total, preset.total),
+      rampStartBorn,
       T: Number(tForG(current, preset.start).toFixed(4)),
     }));
-  };
-
-  const startFromRecordedG07 = () => {
-    const preset = SCHEDULE_PRESETS.g07to05;
-    if (!recordedBase) return;
-
-    const nextSettings = {
-      ...recordedBase.settings,
-      schedule: "g07to05",
-      rampStartBorn: recordedBase.state.born,
-      total: Math.max(
-        settings.total,
-        recordedBase.state.born + preset.extensionBirths,
-      ),
-      waitMs: settings.waitMs,
-      T: Number(tForG(recordedBase.settings, preset.start).toFixed(4)),
-    };
-
-    setSettings(nextSettings);
-    setShowSpirals(false);
-    setRecordedG05Base(null);
-    setRecordedG014Base(null);
-    setState(cloneState(recordedBase.state, { finished: false }));
-    setRunning(true);
-  };
-
-  const startFromRecordedG05 = () => {
-    const preset = SCHEDULE_PRESETS.g05to014;
-    if (!recordedG05Base) return;
-
-    const nextSettings = {
-      ...recordedG05Base.settings,
-      schedule: "g05to014",
-      rampStartBorn: recordedG05Base.state.born,
-      total: Math.max(
-        settings.total,
-        recordedG05Base.state.born + preset.extensionBirths,
-      ),
-      waitMs: settings.waitMs,
-      T: Number(tForG(recordedG05Base.settings, preset.start).toFixed(4)),
-    };
-
-    setSettings(nextSettings);
-    setShowSpirals(false);
-    setRecordedG014Base(null);
-    setState(cloneState(recordedG05Base.state, { finished: false }));
-    setRunning(true);
-  };
-
-  const startFromRecordedG014 = () => {
-    const preset = SCHEDULE_PRESETS.g014to0044;
-    if (!recordedG014Base) return;
-
-    const nextSettings = {
-      ...recordedG014Base.settings,
-      schedule: "g014to0044",
-      rampStartBorn: recordedG014Base.state.born,
-      total: Math.max(
-        settings.total,
-        recordedG014Base.state.born + preset.extensionBirths,
-      ),
-      waitMs: settings.waitMs,
-      T: Number(tForG(recordedG014Base.settings, preset.start).toFixed(4)),
-    };
-
-    setSettings(nextSettings);
-    setShowSpirals(false);
-    setState(cloneState(recordedG014Base.state, { finished: false }));
     setRunning(true);
   };
 
@@ -827,8 +794,8 @@ function App() {
         <div className="canvas-panel">
           <header className="topbar">
             <div>
-              <p>Douady-Couder simulator</p>
-              <h1>葉序シミュレーター</h1>
+              <p>{text.headerKicker}</p>
+              <h1>{text.title}</h1>
             </div>
             <span className={`status ${running ? "is-running" : ""}`}>{status}</span>
           </header>
@@ -860,8 +827,7 @@ function App() {
           <section className="panel-section summary">
             <p className="section-label">model</p>
             <p className="lead">
-              R<sub>0</sub> と V<sub>0</sub> は固定します。
-              G は T を換算して制御します。
+              <ModelDescription locale={locale} />
             </p>
           </section>
 
@@ -881,63 +847,31 @@ function App() {
 
           <section className="metrics">
             <div>
-              <span>発散角</span>
+              <span>{text.metrics.divergence}</span>
               <strong>{divergence ? `${divergence.toFixed(2)}°` : "-"}</strong>
             </div>
             <div>
-              <span>発生数</span>
-              <strong>{state ? `${state.born}/${settings.total}` : "-"}</strong>
-            </div>
-            <div>
-              <span>螺旋数</span>
+              <span>{text.metrics.spirals}</span>
               <strong>
                 {showSpirals ? `${spirals.right.count} / ${spirals.left.count}` : "-"}
               </strong>
             </div>
           </section>
 
-          <div className="progress-track" aria-label="計算進捗">
-            <span style={{ width: `${progress}%` }} />
-          </div>
-
           <section className="panel-section">
             <div className="section-header">
               <p className="section-label">parameters</p>
-              <button
-                className="text-button"
-                onClick={() => {
-                  setRunning(false);
-                  setShowSpirals(false);
-                  setState(null);
-                  setRecordedBase(null);
-                  setRecordedG05Base(null);
-                  setRecordedG014Base(null);
-                  setSettings((current) => ({
-                    ...current,
-                    initialRadius: 5,
-                    speed: 0.25,
-                    T: 2,
-                    schedule: "fixed",
-                    rampStartBorn: undefined,
-                    N: 36000,
-                    M: 15,
-                    waitMs: DEFAULT_WAIT_MS,
-                  }));
-                }}
-              >
-                G=0.1 基準
-              </button>
             </div>
             <NumberField
-              label="T"
-              min="0.2"
-              max="80"
-              step="0.1"
-              value={settings.T}
-              onChange={(value) => update("T", value)}
-              format={(value) => value.toFixed(2)}
+              label="G"
+              min="0.044"
+              max="3"
+              step="0.001"
+              value={Number(G.toFixed(3))}
+              onChange={applyG}
+              format={formatGValue}
             />
-            <div className="preset-grid" aria-label="代表的なG">
+            <div className="preset-grid" aria-label={text.controls.representativeG}>
               {G_PRESETS.map((preset) => (
                 <button
                   key={preset}
@@ -952,87 +886,68 @@ function App() {
                 </button>
               ))}
             </div>
-            {Object.entries(SCHEDULE_PRESETS)
-              .filter(([, preset]) => !preset.requiresRecordedState)
-              .map(([key, preset]) => (
-              <button
-                key={key}
-                className={settings.schedule === key ? "schedule-preset is-active" : "schedule-preset"}
-                onClick={() => applySchedulePreset(key)}
-              >
-                {preset.label}
-              </button>
-            ))}
-            <button
-              className={settings.schedule === "g07to05" ? "schedule-preset is-active" : "schedule-preset"}
-              disabled={running || !recordedBase}
-              onClick={startFromRecordedG07}
-            >
-              {SCHEDULE_PRESETS.g07to05.label}
-            </button>
-            <button
-              className={settings.schedule === "g05to014" ? "schedule-preset is-active" : "schedule-preset"}
-              disabled={running || !recordedG05Base}
-              onClick={startFromRecordedG05}
-            >
-              {SCHEDULE_PRESETS.g05to014.label}
-            </button>
-            <button
-              className={settings.schedule === "g014to0044" ? "schedule-preset is-active" : "schedule-preset"}
-              disabled={running || !recordedG014Base}
-              onClick={startFromRecordedG014}
-            >
-              {SCHEDULE_PRESETS.g014to0044.label}
-            </button>
-            <NumberField
-              label="総数"
-              min="120"
-              max={Math.max(2400, settings.total)}
-              step="20"
-              value={settings.total}
-              onChange={(value) => update("total", value)}
-            />
-            <NumberField
-              label="M"
-              min="1"
-              max="60"
-              step="1"
-              value={settings.M}
-              onChange={(value) => update("M", value)}
-            />
-            <NumberField
-              label="wait"
-              min="16"
-              max="300"
-              step="2"
-              value={settings.waitMs}
-              onChange={(value) => update("waitMs", value)}
-              format={(value) => `${value}ms`}
-            />
+            <div className="schedule-group">
+              {Object.entries(SCHEDULE_PRESETS).map(([key, preset]) => (
+                <button
+                  key={key}
+                  className={settings.schedule === key ? "schedule-preset is-active" : "schedule-preset"}
+                  onClick={() => applySchedulePreset(key)}
+                >
+                  {preset.label}
+                </button>
+              ))}
+            </div>
+            <div className="runtime-group">
+              <NumberField
+                label="M"
+                min="1"
+                max="60"
+                step="1"
+                value={settings.M}
+                onChange={(value) => update("M", value)}
+              />
+              <NumberField
+                label="wait"
+                min="16"
+                max="300"
+                step="2"
+                value={settings.waitMs}
+                onChange={(value) => update("waitMs", value)}
+                format={(value) => `${value}ms`}
+              />
+              <NumberField
+                label="dt"
+                min="0.02"
+                max="1"
+                step="0.01"
+                value={settings.dt}
+                onChange={(value) => update("dt", value)}
+                format={(value) => value.toFixed(2)}
+              />
+              <ToggleField
+                label={text.controls.continuous}
+                checked={settings.continuousMotion}
+                onChange={(value) => update("continuousMotion", value)}
+              />
+            </div>
           </section>
 
           <section className="actions">
-            <button onClick={start}>
-              {(settings.schedule === "g07to05" && recordedBase) ||
-              (settings.schedule === "g05to014" && recordedG05Base) ||
-              (settings.schedule === "g014to0044" && recordedG014Base)
-                ? "接続して計算"
-                : "最初から計算"}
-            </button>
+            <button onClick={start}>{text.controls.start}</button>
             {running ? (
-              <button className="secondary" onClick={pause}>一時停止</button>
+              <button className="secondary" onClick={pause}>{text.controls.pause}</button>
             ) : (
-              <button className="secondary" disabled={!state || state.finished} onClick={resume}>
-                再開
+              <button className="secondary" disabled={!state} onClick={resume}>
+                {text.controls.resume}
               </button>
             )}
-            <button className="secondary" onClick={reset}>リセット</button>
+            <button className="secondary" onClick={reset}>{text.controls.reset}</button>
             <button
               className="secondary"
               disabled={!state || running || !points.length}
               onClick={() => setShowSpirals(true)}
             >
-              螺旋を描く
+              {text.controls.draw}
             </button>
           </section>
 
@@ -1043,23 +958,28 @@ function App() {
             </div>
             <div>
               <span>
-                V<sub>0</sub>T
+                V<sub>0</sub>
               </span>
-              <strong>{growthPerBirth.toFixed(3)}</strong>
+              <strong>{settings.speed.toFixed(2)}</strong>
             </div>
             <div>
-              <span>ポテンシャル</span>
-              <strong>Σ 1/d^4</strong>
+              <span>{text.controls.potential}</span>
+              <strong>Σ 1/d<sup>4</sup></strong>
             </div>
             <div>
-              <span>表示間隔</span>
+              <span>{text.controls.displayInterval}</span>
               <strong>{settings.waitMs}ms</strong>
             </div>
             <div>
-              <span>黄金角</span>
+              <span>{text.controls.goldenAngle}</span>
               <strong>{GOLDEN_ANGLE.toFixed(5)}°</strong>
             </div>
           </section>
+
+          <p className="paper-citation">
+            [1] S. Douady and Y. Couder, “Phyllotaxis as a Physical Self-Organized Growth Process,”
+            Physical Review Letters, 1992.
+          </p>
         </aside>
       </section>
     </main>

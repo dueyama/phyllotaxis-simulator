@@ -31,6 +31,12 @@ sub {
   vertical-align: -0.28em;
 }
 
+sup {
+  font-size: 0.68em;
+  line-height: 0;
+  vertical-align: 0.42em;
+}
+
 button {
   border: 0;
 }
@@ -299,17 +305,11 @@ h1 {
   font-size: 1rem;
 }
 
-.progress-track {
-  height: 8px;
-  overflow: hidden;
-  background: #dce4dc;
-}
-
-.progress-track span {
-  display: block;
-  height: 100%;
-  background: linear-gradient(90deg, #2f8c68, #e07834);
-  transition: width 0.16s linear;
+.paper-citation {
+  margin: 0;
+  color: #65736a;
+  font-size: 0.74rem;
+  line-height: 1.35;
 }
 
 .section-header {
@@ -346,10 +346,39 @@ h1 {
   font-variant-numeric: tabular-nums;
 }
 
+.toggle-control {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 34px;
+  color: #26362b;
+  font-size: 0.9rem;
+  font-weight: 740;
+}
+
+.toggle-control input {
+  width: 18px;
+  height: 18px;
+  accent-color: #2f8c68;
+}
+
 .preset-grid {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 6px;
+  margin-top: 14px;
+}
+
+.schedule-group,
+.runtime-group {
+  display: grid;
+  gap: 6px;
+  margin-top: 18px;
+}
+
+.runtime-group {
+  gap: 12px;
+  padding-top: 2px;
 }
 
 .g-preset {
