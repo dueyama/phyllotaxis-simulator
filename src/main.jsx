@@ -1,86 +1,73 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./styles.css";
 
 const TAU = Math.PI * 2;
 const GOLDEN_RATIO = (1 + Math.sqrt(5)) / 2;
 const GOLDEN_ANGLE = 360 * (1 - 1 / GOLDEN_RATIO);
-const FIXED_ANGLE_BIRTH_RADIUS = 0.025;
-const MODEL_BIRTH_RADIUS = 0.06;
-const MODEL_TOTAL_BIRTHS = 900;
-const FIXED_ANGLE_TOTAL_BIRTHS = 560;
-const FIXED_ANGLE_G =
-  (1 / FIXED_ANGLE_BIRTH_RADIUS - 1) / (FIXED_ANGLE_TOTAL_BIRTHS - 1);
-const SPIRAL_LINE_START_RADIUS = 0.075;
-const POTENTIAL_SAMPLE_COUNT = 1440;
-const POTENTIAL_MIN_PARTICLES = 96;
-const POTENTIAL_MAX_PARTICLES = 420;
-const POTENTIAL_RADIUS_WINDOW = 14;
-const POTENTIAL_MIN_DISTANCE = 0.02;
-const POTENTIAL_MAX_TERM = 1 / POTENTIAL_MIN_DISTANCE ** 3;
-const ANGLE_PRESETS = [
-  { label: "黄金角", value: GOLDEN_ANGLE },
-  { label: "137.45°", value: 137.45 },
-  { label: "137.50°", value: 137.5 },
-  { label: "137.55°", value: 137.55 },
-  { label: "137.60°", value: 137.6 },
-  { label: "138.00°", value: 138 },
-];
-const FALLBACK_PARASTICHIES = {
-  clockwise: { step: 1 },
-  counterClockwise: { step: 2 },
+const DISPLAY_RADIUS_SCALE = 0.018333333333333333;
+const PARTICLE_CULL_RADIUS = 1.2 / DISPLAY_RADIUS_SCALE;
+const DEFAULT_WAIT_MS = 16;
+const G_PRESETS = [3, 2, 1.5, 1, 0.7, 0.5, 0.2, 0.14, 0.044];
+const SCHEDULE_PRESETS = {
+  g3to07: {
+    label: "G=3.0 -> 0.7",
+    note: "G=3.0 -> 0.7",
+    start: 3,
+    target: 0.7,
+    holdBirths: 120,
+    rampBirths: 680,
+    total: 900,
+  },
+  g07to05: {
+    label: "G=0.7 -> 0.5",
+    note: "G=0.7 -> 0.5",
+    start: 0.7,
+    target: 0.5,
+    holdBirths: 0,
+    rampBirths: 500,
+    extensionBirths: 700,
+    requiresRecordedState: true,
+  },
+  g05to014: {
+    label: "G=0.5 -> 0.14",
+    note: "G=0.5 -> 0.14",
+    start: 0.5,
+    target: 0.14,
+    holdBirths: 0,
+    rampBirths: 1400,
+    extensionBirths: 2200,
+    requiresRecordedState: true,
+  },
+  g014to0044: {
+    label: "G=0.14 -> 0.044",
+    note: "G=0.14 -> 0.044",
+    start: 0.14,
+    target: 0.044,
+    holdBirths: 0,
+    rampBirths: 1800,
+    extensionBirths: 2800,
+    requiresRecordedState: true,
+  },
 };
 
-function fibonacci(count) {
-  const seq = [1, 1];
-  while (seq.length < count) {
-    seq.push(seq.at(-1) + seq.at(-2));
-  }
-  return seq.slice(0, count);
-}
+const DEFAULTS = {
+  initialRadius: 5,
+  speed: 0.25,
+  T: 2,
+  schedule: "fixed",
+  total: 900,
+  N: 36000,
+  M: 15,
+  waitMs: DEFAULT_WAIT_MS,
+};
 
-function mod1(value) {
-  return ((value % 1) + 1) % 1;
-}
-
-function signedTurnFraction(step, angleDegrees) {
-  const fraction = mod1((step * angleDegrees) / 360);
-  return fraction > 0.5 ? fraction - 1 : fraction;
+function clamp(value, min, max) {
+  return Math.min(max, Math.max(min, value));
 }
 
 function signedAngleDifference(next, previous) {
   return Math.atan2(Math.sin(next - previous), Math.cos(next - previous));
-}
-
-function generateVogelPoints(count, angleDegrees) {
-  return Array.from({ length: count }, (_, index) => {
-    const radius = Math.sqrt((index + 0.55) / count);
-    const theta = ((angleDegrees * index - 90) * Math.PI) / 180;
-    return {
-      index,
-      theta,
-      radius,
-      x: Math.cos(theta) * radius,
-      y: Math.sin(theta) * radius,
-    };
-  });
-}
-
-function generateFixedAngleSimulation({ count, angleDegrees, g }) {
-  const angles = [];
-  const cumulativeGrowth = [];
-  for (let index = 0; index < count; index += 1) {
-    angles.push(((angleDegrees * index - 90) * Math.PI) / 180);
-    cumulativeGrowth.push(index * g);
-  }
-
-  return {
-    angles,
-    cumulativeGrowth,
-    angleDegrees,
-    birthRadius: FIXED_ANGLE_BIRTH_RADIUS,
-    rawDivergences: Array(Math.max(0, count - 1)).fill((angleDegrees * Math.PI) / 180),
-  };
 }
 
 function median(values) {
@@ -92,1123 +79,990 @@ function median(values) {
     : (sorted[mid - 1] + sorted[mid]) / 2;
 }
 
-function medianOrFallback(values, fallback) {
-  const value = median(values);
-  return value || fallback;
-}
-
-function detectParastichies(points, angleDegrees) {
-  const count = points.length;
-  const maxStep = Math.min(89, Math.max(8, Math.floor(count / 2)));
-  const candidates = [];
-
-  for (let step = 1; step <= maxStep; step += 1) {
-    const distances = [];
-    for (let index = 0; index < count - step; index += 1) {
-      const a = points[index];
-      const b = points[index + step];
-      const dx = a.x - b.x;
-      const dy = a.y - b.y;
-      distances.push(Math.hypot(dx, dy));
-    }
-
-    candidates.push({
-      step,
-      turn: signedTurnFraction(step, angleDegrees),
-      score: median(distances),
-    });
-  }
-
-  const positive = candidates
-    .filter((candidate) => candidate.turn > 0.001)
-    .sort((a, b) => a.score - b.score)[0];
-  const negative = candidates
-    .filter((candidate) => candidate.turn < -0.001)
-    .sort((a, b) => a.score - b.score)[0];
-
-  return {
-    clockwise: positive ?? candidates[0],
-    counterClockwise: negative ?? candidates[1] ?? candidates[0],
-  };
-}
-
-function buildSpiralPaths(points, step) {
-  const paths = [];
-  for (let start = 0; start < step; start += 1) {
-    const path = [];
-    for (let index = start; index < points.length; index += step) {
-      path.push(points[index]);
-    }
-    if (path.length >= 3) paths.push(path);
-  }
-  return paths;
-}
-
-function buildNearestOutwardPaths(points, direction) {
-  const inferredBirthRadius =
-    points.length > 0
-      ? Math.max(0.001, Math.min(...points.map((point) => point.radius)))
-      : MODEL_BIRTH_RADIUS;
-  const rawLinks = [];
-
-  for (const point of points) {
-    let nearest = null;
-    const pointOrder = point.originalIndex ?? point.index;
-
-    for (const candidate of points) {
-      const candidateOrder = candidate.originalIndex ?? candidate.index;
-      const birthGap = Math.abs(candidateOrder - pointOrder);
-      if (birthGap < 1) continue;
-
-      const radialGap = candidate.radius - point.radius;
-      if (radialGap <= Math.max(0.0015, point.radius * 0.012)) continue;
-
-      const delta = signedAngleDifference(candidate.theta, point.theta);
-      if (direction === "right" && delta >= -0.0001) continue;
-      if (direction === "left" && delta <= 0.0001) continue;
-      if (Math.abs(delta) > 1.05) continue;
-
-      const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
-      const relDistance = distance / Math.max(point.radius, inferredBirthRadius * 1.5);
-      const radiusRatio = candidate.radius / Math.max(point.radius, inferredBirthRadius);
-      if (radiusRatio > 2.2) continue;
-
-      const score = distance + radialGap * 0.42 + Math.abs(delta) * 0.08;
-      if (!nearest || score < nearest.score) {
-        nearest = {
-          from: point,
-          to: candidate,
-          birthGap,
-          delta,
-          distance,
-          relDistance,
-          radiusRatio,
-          score,
-        };
-      }
-    }
-
-    if (nearest) {
-      rawLinks.push(nearest);
-    }
-  }
-
-  if (!rawLinks.length) return { count: 0, paths: [] };
-
-  const interiorLinks = rawLinks.filter(
-    (link) =>
-      link.from.radius > inferredBirthRadius * 2.4 &&
-      link.from.radius < 0.78 &&
-      link.to.radius < 0.94,
-  );
-  const stableLinks = interiorLinks.length >= 6 ? interiorLinks : rawLinks;
-  const gapStats = new Map();
-  for (const link of stableLinks) {
-    const stat = gapStats.get(link.birthGap) ?? {
-      count: 0,
-      distance: 0,
-      relDistance: 0,
-      radiusRatio: 0,
-    };
-    stat.count += 1;
-    stat.distance += link.distance;
-    stat.relDistance += link.relDistance;
-    stat.radiusRatio += link.radiusRatio;
-    gapStats.set(link.birthGap, stat);
-  }
-
-  const dominant = [...gapStats.entries()]
-    .map(([gap, stat]) => ({
-      gap,
-      count: stat.count,
-      averageDistance: stat.distance / stat.count,
-      averageRelDistance: stat.relDistance / stat.count,
-      averageRadiusRatio: stat.radiusRatio / stat.count,
-    }))
-    .sort(
-      (a, b) =>
-        b.count - a.count ||
-        a.averageDistance - b.averageDistance ||
-        a.gap - b.gap,
-    )[0];
-  if (!dominant) return { count: 0, paths: [] };
-
-  const orderedPoints = [...points].sort((a, b) => a.radius - b.radius);
-  const innerOrder = orderedPoints[0]?.originalIndex ?? orderedPoints[0]?.index ?? 0;
-  const outerOrder =
-    orderedPoints[orderedPoints.length - 1]?.originalIndex ??
-    orderedPoints[orderedPoints.length - 1]?.index ??
-    innerOrder;
-  const outwardOrderDirection = outerOrder > innerOrder ? 1 : -1;
-  const pointByOrder = new Map(
-    points.map((point) => [point.originalIndex ?? point.index, point]),
-  );
-  const maxRelDistance = Math.max(dominant.averageRelDistance * 2.1, 0.72);
-  const maxRadiusRatio = Math.max(dominant.averageRadiusRatio * 1.65, 1.65);
-
-  const paths = [];
-  for (const point of orderedPoints) {
-    if (point.radius < SPIRAL_LINE_START_RADIUS) continue;
-
-    const currentOrder = point.originalIndex ?? point.index;
-    const next = pointByOrder.get(currentOrder + outwardOrderDirection * dominant.gap);
-    if (!next || next.radius <= point.radius || next.radius >= 0.985) continue;
-
-    const delta = signedAngleDifference(next.theta, point.theta);
-    if (direction === "right" && delta >= -0.0001) continue;
-    if (direction === "left" && delta <= 0.0001) continue;
-    if (Math.abs(delta) > 1.05) continue;
-
-    const distance = Math.hypot(next.x - point.x, next.y - point.y);
-    const relDistance = distance / Math.max(point.radius, inferredBirthRadius * 1.5);
-    const radiusRatio = next.radius / Math.max(point.radius, inferredBirthRadius);
-    if (relDistance > maxRelDistance || radiusRatio > maxRadiusRatio) continue;
-
-    paths.push([point, next]);
-  }
-
-  return {
-    count: dominant.gap,
-    paths,
-  };
-}
-
-function analyzeNearestOutwardSpirals(points) {
-  const right = buildNearestOutwardPaths(points, "right");
-  const left = buildNearestOutwardPaths(points, "left");
-
-  return {
-    clockwise: {
-      count: right.count,
-      paths: right.paths,
-    },
-    counterClockwise: {
-      count: left.count,
-      paths: left.paths,
-    },
-  };
-}
-
-function spiralCount(spiral) {
-  return spiral?.count ?? spiral?.step ?? 0;
-}
-
-function clamp(value, min, max) {
-  return Math.min(max, Math.max(min, value));
-}
-
-function easeOutCubic(value) {
-  return 1 - Math.pow(1 - value, 3);
-}
-
-function useParticleMotion(finalPoints, motionKey, durationMs = 4200) {
-  const [progress, setProgress] = useState(1);
-
-  useEffect(() => {
-    if (!finalPoints.length) {
-      setProgress(1);
-      return undefined;
-    }
-
-    let frame = 0;
-    let start = 0;
-    setProgress(0);
-
-    const tick = (time) => {
-      if (!start) start = time;
-      const nextProgress = clamp((time - start) / durationMs, 0, 1);
-      setProgress(nextProgress);
-      if (nextProgress < 1) {
-        frame = window.requestAnimationFrame(tick);
-      }
-    };
-
-    frame = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(frame);
-  }, [finalPoints, motionKey, durationMs]);
-
-  const animatedPoints = useMemo(() => {
-    if (!finalPoints.length) return [];
-    const maxIndex = Math.max(1, finalPoints.length - 1);
-
-    return finalPoints
-      .map((point) => {
-        const birth = (point.index / maxIndex) * 0.72;
-        const localProgress = clamp((progress - birth) / (1 - birth), 0, 1);
-        if (localProgress <= 0) return null;
-
-        const eased = easeOutCubic(localProgress);
-        const radius = Math.max(0.018, point.radius * eased);
-        return {
-          ...point,
-          radius,
-          x: Math.cos(point.theta) * radius,
-          y: Math.sin(point.theta) * radius,
-        };
-      })
-      .filter(Boolean);
-  }, [finalPoints, progress]);
-
-  return {
-    points: animatedPoints,
-    progress,
-    isMoving: progress < 1,
-    showLines: progress >= 1,
-  };
-}
-
-function useSequentialPlacement(finalPoints, motionKey, durationMs = 5200) {
-  const [progress, setProgress] = useState(1);
-
-  useEffect(() => {
-    if (!finalPoints.length) {
-      setProgress(1);
-      return undefined;
-    }
-
-    let frame = 0;
-    let start = 0;
-    setProgress(0);
-
-    const tick = (time) => {
-      if (!start) start = time;
-      const nextProgress = clamp((time - start) / durationMs, 0, 1);
-      setProgress(nextProgress);
-      if (nextProgress < 1) {
-        frame = window.requestAnimationFrame(tick);
-      }
-    };
-
-    frame = window.requestAnimationFrame(tick);
-    return () => window.cancelAnimationFrame(frame);
-  }, [finalPoints, motionKey, durationMs]);
-
-  const visibleCount = Math.max(
-    1,
-    Math.min(finalPoints.length, Math.ceil(progress * finalPoints.length)),
-  );
-
-  return {
-    points: finalPoints.slice(0, visibleCount),
-    progress,
-    isMoving: progress < 1,
-    showLines: progress >= 1,
-  };
-}
-
-function simulateDouady({ count, targetG, decreasing }) {
-  let activeParticles = [
-    {
-      index: 0,
-      theta: -Math.PI / 2,
-      cosTheta: 0,
-      sinTheta: -1,
-      radius: 1,
-      g: targetG,
-    },
-  ];
-  const divergences = [];
-  const angles = [-Math.PI / 2];
-  const cumulativeGrowth = [0];
-  const samples = POTENTIAL_SAMPLE_COUNT;
-  const interactionCutoffRadius = 1 / MODEL_BIRTH_RADIUS;
-  const sampleTrig = Array.from({ length: samples }, (_, sample) => {
-    const theta = (sample / samples) * TAU;
+function sampleRing(N) {
+  return Array.from({ length: N }, (_, index) => {
+    const theta = (index / N) * TAU;
     return {
       theta,
       cosTheta: Math.cos(theta),
       sinTheta: Math.sin(theta),
     };
   });
-  const potentialEnergy = (cosTheta, sinTheta, particles) => {
-    let energy = 0;
-    let compensation = 0;
+}
 
-    for (const particle of particles) {
-      const angularAlignment =
-        cosTheta * particle.cosTheta + sinTheta * particle.sinTheta;
-      const distanceSquared =
-        1 +
-        particle.radius * particle.radius -
-        2 * particle.radius * angularAlignment;
-      const distance = Math.sqrt(Math.max(distanceSquared, 0));
-      const term =
-        distance <= POTENTIAL_MIN_DISTANCE
-          ? POTENTIAL_MAX_TERM
-          : 1 / (distance * distance * distance);
-      const corrected = term - compensation;
-      const nextEnergy = energy + corrected;
-      compensation = (nextEnergy - energy) - corrected;
-      energy = nextEnergy;
-    }
+function potentialAt(cosTheta, sinTheta, birthRadius, particles) {
+  let total = 0;
+  let compensation = 0;
 
-    return energy;
-  };
-  const potentialEnergyAt = (theta, particles) =>
-    potentialEnergy(Math.cos(theta), Math.sin(theta), particles);
-  const refineMinimum = (centerTheta, particles) => {
-    let left = centerTheta - TAU / samples;
-    let right = centerTheta + TAU / samples;
-    const inversePhi = (Math.sqrt(5) - 1) / 2;
-    let x1 = right - (right - left) * inversePhi;
-    let x2 = left + (right - left) * inversePhi;
-    let e1 = potentialEnergyAt(x1, particles);
-    let e2 = potentialEnergyAt(x2, particles);
-
-    for (let iteration = 0; iteration < 22; iteration += 1) {
-      if (e1 < e2) {
-        right = x2;
-        x2 = x1;
-        e2 = e1;
-        x1 = right - (right - left) * inversePhi;
-        e1 = potentialEnergyAt(x1, particles);
-      } else {
-        left = x1;
-        x1 = x2;
-        e1 = e2;
-        x2 = left + (right - left) * inversePhi;
-        e2 = potentialEnergyAt(x2, particles);
-      }
-    }
-
-    const theta = (left + right) / 2;
-    return {
-      theta,
-      energy: potentialEnergyAt(theta, particles),
-    };
-  };
-
-  for (let index = 1; index < count; index += 1) {
-    const progress = index / Math.max(1, count - 1);
-    const currentG = decreasing
-      ? 1.05 * Math.pow(targetG / 1.05, progress)
-      : targetG;
-    for (const particle of activeParticles) {
-      particle.radius += currentG;
-    }
-    activeParticles = activeParticles.filter(
-      (particle) => particle.radius <= interactionCutoffRadius,
-    );
-    cumulativeGrowth.push(cumulativeGrowth[index - 1] + currentG);
-
-    const potentialParticleCount = clamp(
-      Math.ceil(POTENTIAL_RADIUS_WINDOW / Math.max(currentG, 0.005)),
-      POTENTIAL_MIN_PARTICLES,
-      POTENTIAL_MAX_PARTICLES,
-    );
-    const recent = activeParticles.slice(-potentialParticleCount);
-    let bestTheta = 0;
-    let bestEnergy = Number.POSITIVE_INFINITY;
-    const sampleEnergies = [];
-
-    for (let sample = 0; sample < samples; sample += 1) {
-      const { theta, cosTheta, sinTheta } = sampleTrig[sample];
-      const energy = potentialEnergy(cosTheta, sinTheta, recent);
-      sampleEnergies.push(energy);
-      if (energy < bestEnergy) {
-        bestEnergy = energy;
-        bestTheta = theta;
-      }
-    }
-
-    const localMinima = [];
-    for (let sample = 0; sample < samples; sample += 1) {
-      const previous = sampleEnergies[(sample - 1 + samples) % samples];
-      const current = sampleEnergies[sample];
-      const next = sampleEnergies[(sample + 1) % samples];
-      if (current <= previous && current <= next) {
-        localMinima.push({
-          theta: sampleTrig[sample].theta,
-          energy: current,
-        });
-      }
-    }
-
-    const minimaToRefine = (localMinima.length ? localMinima : [{ theta: bestTheta, energy: bestEnergy }])
-      .sort((a, b) => a.energy - b.energy)
-      .slice(0, 8);
-    for (const minimum of minimaToRefine) {
-      const refined = refineMinimum(minimum.theta, recent);
-      if (refined.energy < bestEnergy) {
-        bestEnergy = refined.energy;
-        bestTheta = refined.theta;
-      }
-    }
-
-    bestTheta = ((bestTheta % TAU) + TAU) % TAU;
-    const previousTheta = angles[angles.length - 1];
-    divergences.push(Math.abs(signedAngleDifference(bestTheta, previousTheta)));
-    activeParticles.push({
-      index,
-      theta: bestTheta,
-      cosTheta: Math.cos(bestTheta),
-      sinTheta: Math.sin(bestTheta),
-      radius: 1,
-      g: currentG,
-    });
-    angles.push(bestTheta);
+  for (const particle of particles) {
+    const dx = birthRadius * cosTheta - particle.radius * particle.cosTheta;
+    const dy = birthRadius * sinTheta - particle.radius * particle.sinTheta;
+    const distance = Math.max(Math.hypot(dx, dy), 0.0001);
+    const term = 1 / (distance * distance * distance * distance);
+    const corrected = term - compensation;
+    const next = total + corrected;
+    compensation = (next - total) - corrected;
+    total = next;
   }
 
-  const recentDivergence = median(divergences.slice(-24)) || Math.PI;
-  const angleDegrees = Math.min(180, (recentDivergence * 180) / Math.PI);
-  const displayAngle = angleDegrees > 180 ? 360 - angleDegrees : angleDegrees;
+  return total;
+}
 
+function fixedG(settings) {
+  return (settings.T * settings.speed) / settings.initialRadius;
+}
+
+function scheduledG(settings, born) {
+  const preset = SCHEDULE_PRESETS[settings.schedule];
+  if (!preset) return fixedG(settings);
+
+  const holdBirths = settings.rampStartBorn ?? preset.holdBirths;
+  if (born <= holdBirths) return preset.start;
+
+  const progress = clamp(
+    (born - holdBirths) / preset.rampBirths,
+    0,
+    1,
+  );
+  const eased = 1 - Math.exp(-4 * progress);
+  if (progress >= 1) return preset.target;
+
+  return preset.start + (preset.target - preset.start) * eased;
+}
+
+function growthPerBirthAt(settings, born) {
+  return scheduledG(settings, born) * settings.initialRadius;
+}
+
+function tForG(settings, g) {
+  return (g * settings.initialRadius) / settings.speed;
+}
+
+function formatGValue(g) {
+  if (g < 0.1) return g.toFixed(3);
+  return g.toFixed(g >= 1 ? 1 : 2);
+}
+
+function createInitialState(settings) {
+  const growthPerBirth = growthPerBirthAt(settings, 1);
   return {
-    angles,
-    cumulativeGrowth,
-    angleDegrees: displayAngle,
-    birthRadius: MODEL_BIRTH_RADIUS,
-    rawDivergences: divergences,
+    particles: [
+      {
+        id: 0,
+        theta: 0,
+        cosTheta: 1,
+        sinTheta: 0,
+        radius: settings.initialRadius + growthPerBirth,
+      },
+    ],
+    angles: [0],
+    divergences: [],
+    born: 1,
+    finished: false,
   };
 }
 
-function pointsForGrowthStep(simulation, step, birthRadius = MODEL_BIRTH_RADIUS) {
-  if (!simulation) return [];
-  const currentStep = clamp(Math.floor(step), 0, simulation.angles.length - 1);
-  const currentGrowth = simulation.cumulativeGrowth[currentStep] ?? 0;
-  const points = [];
+function cloneState(state, overrides = {}) {
+  return {
+    particles: state.particles.map((particle) => ({ ...particle })),
+    angles: [...state.angles],
+    divergences: [...state.divergences],
+    born: state.born,
+    finished: state.finished,
+    ...overrides,
+  };
+}
 
-  for (let index = 0; index <= currentStep; index += 1) {
-    const growthSinceBirth = currentGrowth - simulation.cumulativeGrowth[index];
-    const radius = birthRadius * (1 + growthSinceBirth);
-    if (radius <= 1) {
-      const theta = simulation.angles[index];
-      points.push({
-        index: points.length,
-        originalIndex: index,
-        theta,
+function birthOne(state, settings, samples) {
+  const growthPerBirth = growthPerBirthAt(settings, state.born);
+  const recent = state.particles.slice(-settings.M);
+  let bestTheta = 0;
+  let bestEnergy = Number.POSITIVE_INFINITY;
+
+  for (const sample of samples) {
+    const energy = potentialAt(
+      sample.cosTheta,
+      sample.sinTheta,
+      settings.initialRadius,
+      recent,
+    );
+    if (energy < bestEnergy) {
+      bestEnergy = energy;
+      bestTheta = sample.theta;
+    }
+  }
+
+  const previousTheta = state.angles[state.angles.length - 1];
+  state.divergences.push(Math.abs(signedAngleDifference(bestTheta, previousTheta)));
+  state.angles.push(bestTheta);
+  state.particles.push({
+    id: state.born,
+    theta: bestTheta,
+    cosTheta: Math.cos(bestTheta),
+    sinTheta: Math.sin(bestTheta),
+    radius: settings.initialRadius,
+  });
+  state.born += 1;
+
+  for (const particle of state.particles) {
+    particle.radius += growthPerBirth;
+  }
+  state.particles = state.particles.filter(
+    (particle) => particle.radius <= PARTICLE_CULL_RADIUS,
+  );
+}
+
+function advanceState(current, settings, samples) {
+  const next = {
+    particles: current.particles.map((particle) => ({ ...particle })),
+    angles: [...current.angles],
+    divergences: [...current.divergences],
+    born: current.born,
+    finished: false,
+  };
+
+  for (let index = 0; index < settings.skip; index += 1) {
+    if (next.born >= settings.total) {
+      next.finished = true;
+      break;
+    }
+    birthOne(next, settings, samples);
+  }
+
+  next.finished = next.born >= settings.total;
+  return next;
+}
+
+function visiblePoints(state, scale) {
+  if (!state) return [];
+
+  return state.particles
+    .map((particle, index) => {
+      const radius = scale * particle.radius;
+      if (radius > 1) return null;
+      return {
+        index,
+        originalIndex: particle.id,
+        theta: particle.theta,
         radius,
-        x: Math.cos(theta) * radius,
-        y: Math.sin(theta) * radius,
-      });
+        x: Math.cos(particle.theta) * radius,
+        y: Math.sin(particle.theta) * radius,
+      };
+    })
+    .filter(Boolean);
+}
+
+function currentDivergenceDegrees(state) {
+  if (!state || !state.divergences.length) return null;
+  return (median(state.divergences.slice(-36)) * 180) / Math.PI;
+}
+
+function dominantGap(points, direction) {
+  const gapScores = new Map();
+
+  for (const point of points) {
+    let best = null;
+
+    for (const candidate of points) {
+      if (candidate.radius <= point.radius) continue;
+      const gap = Math.abs(candidate.originalIndex - point.originalIndex);
+      if (gap < 2) continue;
+
+      const delta = signedAngleDifference(candidate.theta, point.theta);
+      if (direction === "right" && delta >= 0) continue;
+      if (direction === "left" && delta <= 0) continue;
+      if (Math.abs(delta) > 1.25) continue;
+
+      const radialGap = candidate.radius - point.radius;
+      const distance = Math.hypot(candidate.x - point.x, candidate.y - point.y);
+      const score = distance + radialGap * 0.25;
+      if (!best || score < best.score) {
+        best = { gap, score };
+      }
+    }
+
+    if (!best) continue;
+    const current = gapScores.get(best.gap) ?? { count: 0, score: 0 };
+    current.count += 1;
+    current.score += best.score;
+    gapScores.set(best.gap, current);
+  }
+
+  const dominant = [...gapScores.entries()]
+    .map(([gap, value]) => ({
+      gap,
+      count: value.count,
+      score: value.score / value.count,
+    }))
+    .sort((a, b) => b.count - a.count || a.score - b.score)[0];
+
+  return dominant?.gap ?? 0;
+}
+
+function buildSegments(points, gap, direction) {
+  if (!gap) return [];
+  const byId = new Map(points.map((point) => [point.originalIndex, point]));
+  const segments = [];
+
+  for (const point of points) {
+    if (point.radius < 0.09) continue;
+    const next = byId.get(point.originalIndex - gap);
+    if (!next || next.radius <= point.radius || next.radius > 0.99) continue;
+
+    const delta = signedAngleDifference(next.theta, point.theta);
+    if (direction === "right" && delta >= 0) continue;
+    if (direction === "left" && delta <= 0) continue;
+    segments.push([point, next]);
+  }
+
+  return segments;
+}
+
+function unwrapByRadius(path) {
+  if (!path.length) return [];
+  let theta = path[0].theta;
+  const unwrapped = [{ ...path[0], unwrappedTheta: theta }];
+
+  for (let index = 1; index < path.length; index += 1) {
+    theta += signedAngleDifference(path[index].theta, path[index - 1].theta);
+    unwrapped.push({ ...path[index], unwrappedTheta: theta });
+  }
+
+  return unwrapped;
+}
+
+function fitArchimedean(points) {
+  const n = points.length;
+  const sumTheta = points.reduce((sum, point) => sum + point.unwrappedTheta, 0);
+  const sumRadius = points.reduce((sum, point) => sum + point.radius, 0);
+  const sumThetaRadius = points.reduce(
+    (sum, point) => sum + point.unwrappedTheta * point.radius,
+    0,
+  );
+  const sumTheta2 = points.reduce(
+    (sum, point) => sum + point.unwrappedTheta * point.unwrappedTheta,
+    0,
+  );
+  const denominator = n * sumTheta2 - sumTheta * sumTheta;
+  if (Math.abs(denominator) < 0.000001) return null;
+
+  const a = (n * sumThetaRadius - sumTheta * sumRadius) / denominator;
+  const b = (sumRadius - a * sumTheta) / n;
+  return { a, b };
+}
+
+function sampleArchimedeanPath(points, innerRadius) {
+  const unwrapped = unwrapByRadius(points);
+  const fit = fitArchimedean(unwrapped);
+  if (!fit) return points;
+
+  const thetaStart = unwrapped[0].unwrappedTheta;
+  const thetaEnd = unwrapped[unwrapped.length - 1].unwrappedTheta;
+  const thetaInner =
+    Math.abs(fit.a) > 0.000001
+      ? (innerRadius - fit.b) / fit.a
+      : thetaStart;
+  const outerRadius = 0.99;
+  const thetaOuter =
+    Math.abs(fit.a) > 0.000001
+      ? (outerRadius - fit.b) / fit.a
+      : thetaEnd;
+  const extendedThetaStart =
+    thetaEnd >= thetaStart
+      ? Math.min(thetaStart, thetaInner)
+      : Math.max(thetaStart, thetaInner);
+  const extendedThetaEnd =
+    thetaEnd >= thetaStart
+      ? Math.max(thetaEnd, thetaOuter)
+      : Math.min(thetaEnd, thetaOuter);
+  const steps = Math.max(18, Math.min(72, unwrapped.length * 18));
+  const sampled = [];
+
+  for (let index = 0; index <= steps; index += 1) {
+    const t = index / steps;
+    const theta = extendedThetaStart + (extendedThetaEnd - extendedThetaStart) * t;
+    const radius = fit.a * theta + fit.b;
+    if (radius < innerRadius || radius > outerRadius) continue;
+    sampled.push({
+      theta,
+      radius,
+      x: Math.cos(theta) * radius,
+      y: Math.sin(theta) * radius,
+    });
+  }
+
+  return sampled.length >= 3 ? sampled : points;
+}
+
+function buildArchimedeanPaths(points, gap, innerRadius) {
+  if (!gap) return [];
+  const paths = [];
+
+  for (let start = 0; start < gap; start += 1) {
+    const path = points
+      .filter((point) => point.originalIndex % gap === start)
+      .filter((point) => point.radius >= 0.04 && point.radius <= 0.98)
+      .sort((a, b) => a.radius - b.radius);
+
+    if (path.length >= 2) {
+      paths.push(sampleArchimedeanPath(path, innerRadius));
     }
   }
 
-  return points;
+  return paths;
 }
 
-function useFixedAngleSimulation(settings) {
-  return useMemo(() => generateFixedAngleSimulation(settings), [
-    settings.count,
-    settings.angleDegrees,
-    settings.g,
-  ]);
+function preferredSpiralPair(g) {
+  if (g >= 0.035 && g <= 0.06) return { right: 13, left: 21 };
+  if (g >= 0.1 && g <= 0.18) return { right: 8, left: 13 };
+  if (g >= 0.45 && g <= 0.58) return { right: 5, left: 8 };
+  if (g >= 0.62 && g <= 0.78) return { right: 3, left: 5 };
+  return null;
 }
 
-function useDouadySimulation(settings) {
-  const [simulation, setSimulation] = useState(null);
-  const [runId, setRunId] = useState(0);
-
-  useEffect(() => {
-    if (runId === 0) return;
-    let cancelled = false;
-    setSimulation(null);
-    const handle = window.setTimeout(() => {
-      const next = simulateDouady(settings);
-      if (!cancelled) setSimulation(next);
-    }, 24);
-
-    return () => {
-      cancelled = true;
-      window.clearTimeout(handle);
-    };
-  }, [settings.count, settings.targetG, settings.decreasing, runId]);
+function analyzeSpirals(points, innerRadius, preferredPair) {
+  const rightGap = preferredPair?.right ?? dominantGap(points, "right");
+  const leftGap = preferredPair?.left ?? dominantGap(points, "left");
 
   return {
-    simulation,
-    run: () => setRunId((value) => value + 1),
-  };
-}
-
-function useGrowthPlayback(simulation, motionKey, durationMs = 5200) {
-  const [progress, setProgress] = useState(1);
-  const [stopped, setStopped] = useState(false);
-  const stoppedRef = useRef(false);
-
-  useEffect(() => {
-    if (!simulation) {
-      setProgress(1);
-      setStopped(false);
-      stoppedRef.current = false;
-      return undefined;
-    }
-
-    const start = performance.now();
-    setProgress(0);
-    setStopped(false);
-    stoppedRef.current = false;
-
-    let interval = 0;
-    const tick = () => {
-      if (stoppedRef.current) return;
-      const time = performance.now();
-      const nextProgress = clamp((time - start) / durationMs, 0, 1);
-      setProgress(nextProgress);
-      if (nextProgress >= 1) {
-        window.clearInterval(interval);
-      }
-    };
-
-    interval = window.setInterval(tick, 33);
-    tick();
-    return () => window.clearInterval(interval);
-  }, [simulation, motionKey, durationMs]);
-
-  const step = simulation ? progress * (simulation.angles.length - 1) : 0;
-  const points = pointsForGrowthStep(simulation, step, simulation?.birthRadius);
-
-  return {
-    points,
-    progress,
-    isMoving: progress < 1 && !stopped,
-    isComplete: progress >= 1,
-    showLines: stopped,
-    canDraw: Boolean(simulation) && progress >= 1 && !stopped,
-    drawSpirals: () => {
-      stoppedRef.current = true;
-      setStopped(true);
+    right: {
+      count: rightGap,
+      paths: buildArchimedeanPaths(points, rightGap, innerRadius),
+    },
+    left: {
+      count: leftGap,
+      paths: buildArchimedeanPaths(points, leftGap, innerRadius),
     },
   };
 }
 
-function svgPoint(point, size = 520, margin = 34) {
-  const scale = size / 2 - margin;
+function project(point, size) {
+  const scale = size / 2 - 30;
   return {
     x: size / 2 + point.x * scale,
     y: size / 2 + point.y * scale,
   };
 }
 
-function SpiralDiagram({
-  points,
-  parastichies,
-  size = 520,
-  showBoth = true,
-  showLines = true,
-  birthRingScale = null,
-  emphasizeBirthRing = false,
-}) {
-  const clockwisePaths =
-    parastichies.clockwise.paths ??
-    buildSpiralPaths(points, parastichies.clockwise.step);
-  const counterPaths =
-    parastichies.counterClockwise.paths ??
-    buildSpiralPaths(points, parastichies.counterClockwise.step);
+function SimulationView({ points, spirals, initialRadius, showSpirals }) {
+  const size = 640;
+  const renderPath = (path) => {
+    const projected = path.map((point) => project(point, size));
+    if (projected.length < 2) return "";
+    if (projected.length === 2) {
+      const [first, second] = projected;
+      return `M ${first.x.toFixed(2)} ${first.y.toFixed(2)} L ${second.x.toFixed(2)} ${second.y.toFixed(2)}`;
+    }
 
-  const renderPath = (path) =>
-    path
-      .map((point, index) => {
-        const projected = svgPoint(point, size);
-        return `${index === 0 ? "M" : "L"} ${projected.x.toFixed(2)} ${projected.y.toFixed(2)}`;
-      })
-      .join(" ");
+    let d = `M ${projected[0].x.toFixed(2)} ${projected[0].y.toFixed(2)}`;
+    for (let index = 0; index < projected.length - 1; index += 1) {
+      const p0 = projected[Math.max(0, index - 1)];
+      const p1 = projected[index];
+      const p2 = projected[index + 1];
+      const p3 = projected[Math.min(projected.length - 1, index + 2)];
+      const c1x = p1.x + (p2.x - p0.x) / 6;
+      const c1y = p1.y + (p2.y - p0.y) / 6;
+      const c2x = p2.x - (p3.x - p1.x) / 6;
+      const c2y = p2.y - (p3.y - p1.y) / 6;
+      d += ` C ${c1x.toFixed(2)} ${c1y.toFixed(2)}, ${c2x.toFixed(2)} ${c2y.toFixed(2)}, ${p2.x.toFixed(2)} ${p2.y.toFixed(2)}`;
+    }
+    return d;
+  };
 
   return (
-    <svg className="phyllo-svg" viewBox={`0 0 ${size} ${size}`} role="img">
-      <circle className="disc" cx={size / 2} cy={size / 2} r={size / 2 - 24} />
-      {showLines && (
-        <g>
-          <g className="spiral-lines clockwise-lines">
-            {clockwisePaths.map((path, index) => (
-              <path key={`cw-${index}`} d={renderPath(path)} />
+    <svg className="sim-svg" viewBox={`0 0 ${size} ${size}`} role="img">
+      <circle className="field" cx={size / 2} cy={size / 2} r={size / 2 - 24} />
+      <circle
+        className="birth-ring"
+        cx={size / 2}
+        cy={size / 2}
+        r={(size / 2 - 30) * DISPLAY_RADIUS_SCALE * initialRadius}
+      />
+      {showSpirals && (
+        <g className="spirals">
+          <g className="right-spirals">
+            {spirals.right.paths.map((path, index) => (
+              <path key={`r-${index}`} d={renderPath(path)} />
             ))}
           </g>
-          {showBoth && (
-            <g className="spiral-lines counter-lines">
-              {counterPaths.map((path, index) => (
-                <path key={`ccw-${index}`} d={renderPath(path)} />
-              ))}
-            </g>
-          )}
+          <g className="left-spirals">
+            {spirals.left.paths.map((path, index) => (
+              <path key={`l-${index}`} d={renderPath(path)} />
+            ))}
+          </g>
         </g>
       )}
       <g>
         {points.map((point) => {
-          const projected = svgPoint(point, size);
-          const radius = point.radius < SPIRAL_LINE_START_RADIUS ? 2.35 : 3.15;
+          const p = project(point, size);
           return (
             <circle
-              key={point.index}
-              className="seed-dot"
-              cx={projected.x}
-              cy={projected.y}
-              r={radius}
+              key={point.originalIndex}
+              className="particle"
+              cx={p.x}
+              cy={p.y}
+              r={6}
             />
           );
         })}
       </g>
-      {birthRingScale !== null && (
-        <circle
-          className={emphasizeBirthRing ? "birth-ring birth-ring-emphasis" : "birth-ring"}
-          cx={size / 2}
-          cy={size / 2}
-          r={(size / 2 - 34) * birthRingScale}
-        />
-      )}
     </svg>
   );
 }
 
-function LessonHeader() {
+function NumberField({ label, value, min, max, step, onChange, format = (number) => number }) {
   return (
-    <header className="hero">
-      <nav className="topbar">
-        <span className="brand">Phyllotaxis Learning</span>
-        <a href="#spirals">螺旋を数える</a>
-        <a href="#model">モデル</a>
-        <a href="#bifurcation">分岐図</a>
-      </nav>
-      <div className="hero-grid">
-        <div className="hero-copy">
-          <h1>葉序問題を、数列から自己組織化モデルまで順に学ぶ。</h1>
-          <p>
-            フィボナッチ数列、黄金比、黄金角、植物に現れる左右の螺旋数、そして
-            Douady-Couder 型の反発最小化シミュレーションを、すべてコードで再構成した教材です。
-          </p>
-        </div>
-        <GoldenPreview />
-      </div>
-    </header>
-  );
-}
-
-function GoldenPreview() {
-  const points = useMemo(() => generateVogelPoints(180, GOLDEN_ANGLE), []);
-  const parastichies = useMemo(() => analyzeNearestOutwardSpirals(points), [points]);
-  return (
-    <div className="preview-panel">
-      <SpiralDiagram
-        points={points}
-        parastichies={parastichies}
-        size={430}
-        birthRingScale={FIXED_ANGLE_BIRTH_RADIUS}
-        emphasizeBirthRing
+    <label className="control">
+      <span>{label}</span>
+      <input
+        type="range"
+        min={min}
+        max={max}
+        step={step}
+        value={value}
+        onChange={(event) => onChange(Number(event.target.value))}
       />
-      <div className="preview-caption">
-        <span>黄金角 {GOLDEN_ANGLE.toFixed(2)}°</span>
-        <strong>
-          {spiralCount(parastichies.clockwise)} /{" "}
-          {spiralCount(parastichies.counterClockwise)}
-        </strong>
-      </div>
-    </div>
+      <output>{format(value)}</output>
+    </label>
   );
 }
 
-function FibonacciSection() {
-  const seq = fibonacci(12);
-  const ratios = seq.slice(1).map((value, index) => value / seq[index]);
-
-  return (
-    <section className="section two-column">
-      <div>
-        <p className="section-number">01</p>
-        <h2>フィボナッチ数列と黄金比</h2>
-        <p>
-          フィボナッチ数列は、直前の2項を足して次の項を作る数列です。
-          隣り合う項の比は、項が進むにつれて黄金比に近づきます。
-        </p>
-        <div className="formula">F(n+1) = F(n) + F(n-1)</div>
-      </div>
-      <div className="number-board">
-        <div className="sequence">
-          {seq.map((value, index) => (
-            <span key={`${value}-${index}`}>{value}</span>
-          ))}
-        </div>
-        <div className="ratio-list">
-          {ratios.slice(3, 10).map((ratio, index) => (
-            <div key={index}>
-              <span>{seq[index + 4]} / {seq[index + 3]}</span>
-              <strong>{ratio.toFixed(5)}</strong>
-            </div>
-          ))}
-        </div>
-        <div className="golden-value">黄金比 φ = {GOLDEN_RATIO.toFixed(5)}</div>
-      </div>
-    </section>
-  );
+function statusText(state, running, showSpirals) {
+  if (!state) return "未開始";
+  if (showSpirals) return "螺旋表示";
+  if (running) return "計算中";
+  if (state.finished) return "計算完了";
+  return "一時停止";
 }
 
-function SpiralCounterSection() {
-  const [angle, setAngle] = useState(GOLDEN_ANGLE);
-  const [replayId, setReplayId] = useState(0);
-  const simulation = useFixedAngleSimulation({
-    count: FIXED_ANGLE_TOTAL_BIRTHS,
-    angleDegrees: angle,
-    g: FIXED_ANGLE_G,
-  });
-  const playback = useGrowthPlayback(
-    simulation,
-    `${angle}-${FIXED_ANGLE_TOTAL_BIRTHS}-${replayId}`,
+function App() {
+  const [settings, setSettings] = useState(DEFAULTS);
+  const [state, setState] = useState(null);
+  const [running, setRunning] = useState(false);
+  const [showSpirals, setShowSpirals] = useState(false);
+  const [recordedBase, setRecordedBase] = useState(null);
+  const [recordedG05Base, setRecordedG05Base] = useState(null);
+  const [recordedG014Base, setRecordedG014Base] = useState(null);
+  const samples = useMemo(() => sampleRing(settings.N), [settings.N]);
+  const currentBorn = state?.born ?? 0;
+  const G = scheduledG(settings, currentBorn);
+  const currentT = tForG(settings, G);
+  const growthPerBirth = G * settings.initialRadius;
+  const modelSettings = useMemo(
+    () => ({
+      ...settings,
+      skip: 1,
+    }),
+    [settings],
   );
-  const finalPoints = useMemo(
+  const points = useMemo(() => visiblePoints(state, DISPLAY_RADIUS_SCALE), [state]);
+  const birthDisplayRadius = DISPLAY_RADIUS_SCALE * settings.initialRadius;
+  const preferredPair = useMemo(() => preferredSpiralPair(G), [G]);
+  const spirals = useMemo(
     () =>
-      pointsForGrowthStep(
-        simulation,
-        simulation.angles.length - 1,
-        FIXED_ANGLE_BIRTH_RADIUS,
+      showSpirals
+        ? analyzeSpirals(points, birthDisplayRadius, preferredPair)
+        : { right: { count: 0, paths: [] }, left: { count: 0, paths: [] } },
+    [points, showSpirals, birthDisplayRadius, preferredPair],
+  );
+  const divergence = currentDivergenceDegrees(state);
+  const status = statusText(state, running, showSpirals);
+  const progress = state ? (state.born / settings.total) * 100 : 0;
+
+  useEffect(() => {
+    if (!running) return undefined;
+
+    let lastTick = window.performance.now();
+    let accumulatedSteps = 0;
+    const timer = window.setInterval(() => {
+      const now = window.performance.now();
+      accumulatedSteps += (now - lastTick) / settings.waitMs;
+      lastTick = now;
+
+      const maxStepsPerTick = Math.max(1, Math.floor(120000 / settings.N));
+      const steps = Math.min(maxStepsPerTick, Math.floor(accumulatedSteps));
+      if (steps < 1) return;
+      accumulatedSteps -= steps;
+
+      setState((current) => {
+        if (!current) return current;
+        const next = advanceState(
+          current,
+          {
+            ...modelSettings,
+            skip: steps,
+          },
+          samples,
+        );
+        if (next.finished) setRunning(false);
+        return next;
+      });
+    }, settings.waitMs);
+
+    return () => window.clearInterval(timer);
+  }, [running, modelSettings, samples, settings.waitMs]);
+
+  useEffect(() => {
+    if (running || !state?.finished) return;
+
+    if (settings.schedule === "g3to07" && !recordedBase) {
+      setRecordedBase({
+        g: G,
+        settings: {
+          ...settings,
+          schedule: "fixed",
+          rampStartBorn: undefined,
+          total: state.born,
+          T: Number(tForG(settings, 0.7).toFixed(4)),
+        },
+        state: cloneState(state, { finished: false }),
+      });
+      setShowSpirals(true);
+      return;
+    }
+
+    if (settings.schedule === "g07to05" && !showSpirals) {
+      if (!recordedG05Base) {
+        setRecordedG05Base({
+          g: G,
+          settings: {
+            ...settings,
+            schedule: "fixed",
+            rampStartBorn: undefined,
+            total: state.born,
+            T: Number(tForG(settings, 0.5).toFixed(4)),
+          },
+          state: cloneState(state, { finished: false }),
+        });
+      }
+      setShowSpirals(true);
+      return;
+    }
+
+    if (settings.schedule === "g05to014" && !showSpirals) {
+      if (!recordedG014Base) {
+        setRecordedG014Base({
+          g: G,
+          settings: {
+            ...settings,
+            schedule: "fixed",
+            rampStartBorn: undefined,
+            total: state.born,
+            T: Number(tForG(settings, 0.14).toFixed(4)),
+          },
+          state: cloneState(state, { finished: false }),
+        });
+      }
+      setShowSpirals(true);
+      return;
+    }
+
+    if (settings.schedule === "g014to0044" && !showSpirals) {
+      setShowSpirals(true);
+    }
+  }, [
+    G,
+    recordedBase,
+    recordedG014Base,
+    recordedG05Base,
+    running,
+    settings,
+    showSpirals,
+    state,
+  ]);
+
+  const update = (key, value) => {
+    setRunning(false);
+    setShowSpirals(false);
+    setState(null);
+    if (key !== "waitMs") {
+      setRecordedBase(null);
+      setRecordedG05Base(null);
+      setRecordedG014Base(null);
+    }
+    setSettings((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === "T" ? { schedule: "fixed" } : {}),
+    }));
+  };
+
+  const start = () => {
+    setShowSpirals(false);
+    if (settings.schedule === "g07to05" && recordedBase) {
+      setState(cloneState(recordedBase.state, { finished: false }));
+    } else if (settings.schedule === "g05to014" && recordedG05Base) {
+      setState(cloneState(recordedG05Base.state, { finished: false }));
+    } else if (settings.schedule === "g014to0044" && recordedG014Base) {
+      setState(cloneState(recordedG014Base.state, { finished: false }));
+    } else {
+      setState(createInitialState(modelSettings));
+    }
+    setRunning(true);
+  };
+
+  const pause = () => {
+    setRunning(false);
+  };
+
+  const resume = () => {
+    if (state && !state.finished) {
+      setShowSpirals(false);
+      setRunning(true);
+    }
+  };
+
+  const reset = () => {
+    setRunning(false);
+    setShowSpirals(false);
+    setState(null);
+  };
+
+  const applyG = (targetG) => {
+    setRunning(false);
+    setShowSpirals(false);
+    setRecordedBase(null);
+    setRecordedG05Base(null);
+    setRecordedG014Base(null);
+    setState(null);
+    setSettings((current) => ({
+      ...current,
+      schedule: "fixed",
+      rampStartBorn: undefined,
+      T: Number(tForG(current, targetG).toFixed(4)),
+    }));
+  };
+
+  const applySchedulePreset = (scheduleKey) => {
+    const preset = SCHEDULE_PRESETS[scheduleKey];
+    if (!preset) return;
+
+    setRunning(false);
+    setShowSpirals(false);
+    setRecordedBase(null);
+    setRecordedG05Base(null);
+    setRecordedG014Base(null);
+    setState(null);
+    setSettings((current) => ({
+      ...current,
+      schedule: scheduleKey,
+      rampStartBorn: undefined,
+      total: Math.max(current.total, preset.total),
+      T: Number(tForG(current, preset.start).toFixed(4)),
+    }));
+  };
+
+  const startFromRecordedG07 = () => {
+    const preset = SCHEDULE_PRESETS.g07to05;
+    if (!recordedBase) return;
+
+    const nextSettings = {
+      ...recordedBase.settings,
+      schedule: "g07to05",
+      rampStartBorn: recordedBase.state.born,
+      total: Math.max(
+        settings.total,
+        recordedBase.state.born + preset.extensionBirths,
       ),
-    [simulation],
-  );
-  const parastichies = useMemo(
-    () => analyzeNearestOutwardSpirals(finalPoints),
-    [finalPoints],
-  );
-  const canDrawSpirals =
-    !playback.isMoving &&
-    !playback.showLines &&
-    spiralCount(parastichies.clockwise) > 0 &&
-    spiralCount(parastichies.counterClockwise) > 0;
-  const showSpirals =
-    playback.showLines &&
-    spiralCount(parastichies.clockwise) > 0 &&
-    spiralCount(parastichies.counterClockwise) > 0;
+      waitMs: settings.waitMs,
+      T: Number(tForG(recordedBase.settings, preset.start).toFixed(4)),
+    };
+
+    setSettings(nextSettings);
+    setShowSpirals(false);
+    setRecordedG05Base(null);
+    setRecordedG014Base(null);
+    setState(cloneState(recordedBase.state, { finished: false }));
+    setRunning(true);
+  };
+
+  const startFromRecordedG05 = () => {
+    const preset = SCHEDULE_PRESETS.g05to014;
+    if (!recordedG05Base) return;
+
+    const nextSettings = {
+      ...recordedG05Base.settings,
+      schedule: "g05to014",
+      rampStartBorn: recordedG05Base.state.born,
+      total: Math.max(
+        settings.total,
+        recordedG05Base.state.born + preset.extensionBirths,
+      ),
+      waitMs: settings.waitMs,
+      T: Number(tForG(recordedG05Base.settings, preset.start).toFixed(4)),
+    };
+
+    setSettings(nextSettings);
+    setShowSpirals(false);
+    setRecordedG014Base(null);
+    setState(cloneState(recordedG05Base.state, { finished: false }));
+    setRunning(true);
+  };
+
+  const startFromRecordedG014 = () => {
+    const preset = SCHEDULE_PRESETS.g014to0044;
+    if (!recordedG014Base) return;
+
+    const nextSettings = {
+      ...recordedG014Base.settings,
+      schedule: "g014to0044",
+      rampStartBorn: recordedG014Base.state.born,
+      total: Math.max(
+        settings.total,
+        recordedG014Base.state.born + preset.extensionBirths,
+      ),
+      waitMs: settings.waitMs,
+      T: Number(tForG(recordedG014Base.settings, preset.start).toFixed(4)),
+    };
+
+    setSettings(nextSettings);
+    setShowSpirals(false);
+    setState(cloneState(recordedG014Base.state, { finished: false }));
+    setRunning(true);
+  };
 
   return (
-    <section id="spirals" className="section lab-section">
-      <div className="section-intro">
-        <p className="section-number">02</p>
-        <h2>粒子をつなぎ、右巻き・左巻きの螺旋を数える</h2>
-        <p>
-          各粒子を、より外側にある右向き・左向きの最近傍へ別々に結びます。
-          局所的な螺旋の連続性が崩れたところで接続を止めると、黄金角付近ではフィボナッチ数の組が現れます。
-        </p>
-      </div>
-      <div className="lab-grid">
-        <div className="visual-card">
-          <div className="animation-stage">
-            <SpiralDiagram
-              points={playback.points}
-              parastichies={parastichies}
-              showLines={showSpirals}
-              birthRingScale={FIXED_ANGLE_BIRTH_RADIUS}
-              emphasizeBirthRing
-            />
-            <div className="animation-status">
-              {showSpirals
-                ? "停止後の点群で螺旋を接続"
-                : playback.isMoving
-                  ? "一つずつ発射して放射方向へ移動中"
-                  : "移動完了: ボタンで螺旋を描く"}
-            </div>
-          </div>
-        </div>
-        <div className="controls-card">
-          <div className="metric-pair">
+    <main className="sim-app">
+      <section className="workbench">
+        <div className="canvas-panel">
+          <header className="topbar">
             <div>
-              <span>右巻き螺旋</span>
-              <strong>{spiralCount(parastichies.clockwise)}</strong>
+              <p>Douady-Couder simulator</p>
+              <h1>葉序シミュレーター</h1>
             </div>
-            <div>
-              <span>左巻き螺旋</span>
-              <strong>{spiralCount(parastichies.counterClockwise)}</strong>
-            </div>
-          </div>
-          <label>
-            回転角
-            <input
-              type="range"
-              min="90"
-              max="180"
-              step="0.001"
-              value={angle}
-              onChange={(event) => setAngle(Number(event.target.value))}
-            />
-            <output>{angle.toFixed(3)}°</output>
-          </label>
-          <div className="button-row">
-            {ANGLE_PRESETS.map((preset) => (
-              <button key={preset.label} onClick={() => setAngle(preset.value)}>
-                {preset.label}
-              </button>
-            ))}
-            <button onClick={() => setReplayId((value) => value + 1)}>再生</button>
-            <button
-              className="secondary-button"
-              disabled={!canDrawSpirals}
-              onClick={playback.drawSpirals}
-            >
-              停止後に螺旋を描く
-            </button>
-          </div>
-          <p className="note">
-            各粒子は出生リングから一つずつ発射され、同じ角度差を保って放射方向へ移動します。
-            黄金角は {GOLDEN_ANGLE.toFixed(5)}° です。
-            そこからわずかに外すだけで螺旋数と密度の見え方が変わります。
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
+            <span className={`status ${running ? "is-running" : ""}`}>{status}</span>
+          </header>
 
-function ModelSection() {
-  const [targetG, setTargetG] = useState(0.04);
-  const [decreasing, setDecreasing] = useState(false);
-  const { simulation, run } = useDouadySimulation({
-    count: MODEL_TOTAL_BIRTHS,
-    targetG,
-    decreasing,
-  });
-  const playback = useGrowthPlayback(
-    simulation,
-    simulation ? `${simulation.angleDegrees}-${simulation.angles.length}` : "empty",
-  );
-  const finalPoints = useMemo(
-    () =>
-      simulation
-        ? pointsForGrowthStep(
-            simulation,
-            simulation.angles.length - 1,
-            MODEL_BIRTH_RADIUS,
-          )
-        : [],
-    [simulation],
-  );
-  const finalParastichies = useMemo(
-    () =>
-      simulation && finalPoints.length >= 12
-        ? analyzeNearestOutwardSpirals(finalPoints)
-        : null,
-    [finalPoints, simulation],
-  );
-  const parastichies = finalParastichies;
-  const visualParastichies = parastichies ?? FALLBACK_PARASTICHIES;
-  const hasDrawableSpirals =
-    Boolean(parastichies) &&
-    spiralCount(parastichies.clockwise) > 0 &&
-    spiralCount(parastichies.counterClockwise) > 0;
-  const canDrawVisibleSpirals =
-    !playback.isMoving && !playback.showLines && hasDrawableSpirals;
-  const shouldShowSpiralLines = playback.showLines && hasDrawableSpirals;
-  const modelStatus = shouldShowSpiralLines
-    ? "停止後の点群で螺旋を接続"
-    : playback.isMoving
-      ? "リング上に生まれ外へ移動中"
-      : hasDrawableSpirals
-        ? "移動完了: ボタンで螺旋を描く"
-        : "Gが大きい時は古い粒子がすぐ外へ出ます";
-
-  return (
-    <section id="model" className="section model-section">
-      <div className="section-intro">
-        <p className="section-number">03</p>
-        <h2>Douady-Couder 型の反発最小化シミュレーション</h2>
-        <p>
-          新しい原基は中心近くの円周上に生まれ、既存原基からの反発ポテンシャルが最小になる角度を選びます。
-          通常は出生間隔 T を固定し、既存原基は成長に伴って外向きへ運ばれます。
-        </p>
-      </div>
-      <div className="model-grid">
-        <div className="visual-card">
-          {simulation ? (
-            <div className="animation-stage">
-              <SpiralDiagram
-                points={playback.points}
-                parastichies={visualParastichies}
-                showLines={shouldShowSpiralLines}
-                birthRingScale={MODEL_BIRTH_RADIUS}
-                emphasizeBirthRing
-              />
-              <div className="animation-status">{modelStatus}</div>
-            </div>
-          ) : (
-            <div className="simulation-loading">
-              <span />
-              <strong>モデルを計算して再生</strong>
-            </div>
-          )}
-        </div>
-        <div className="controls-card">
-          <div className="equation-block">
-            <span>制御パラメータ</span>
-            <strong>G = V₀T / R₀</strong>
-            <small>この教材では V₀/R₀ を固定し、T で G を変えます。</small>
+          <div className="canvas-stage">
+            <SimulationView
+              points={points}
+              spirals={spirals}
+              initialRadius={settings.initialRadius}
+              showSpirals={showSpirals}
+            />
           </div>
-          <div className="metric-pair">
+
+          <div className="formula-bar">
+            <span>
+              G = V<sub>0</sub>T / R<sub>0</sub> = {G.toFixed(3)}
+            </span>
+            <span>T = {currentT.toFixed(2)}</span>
+            <span>
+              V<sub>0</sub> = {settings.speed.toFixed(2)}
+            </span>
+            <span>
+              R<sub>0</sub> = {settings.initialRadius}
+            </span>
+          </div>
+        </div>
+
+        <aside className="control-panel">
+          <section className="panel-section summary">
+            <p className="section-label">model</p>
+            <p className="lead">
+              R<sub>0</sub> と V<sub>0</sub> は固定します。
+              G は T を換算して制御します。
+            </p>
+          </section>
+
+          <section className="g-readout">
+            <span>G</span>
+            <strong>{G.toFixed(3)}</strong>
+            <small>
+              {SCHEDULE_PRESETS[settings.schedule]
+                ? SCHEDULE_PRESETS[settings.schedule].note
+                : (
+                    <>
+                      G = V<sub>0</sub>T / R<sub>0</sub>
+                    </>
+                  )}
+            </small>
+          </section>
+
+          <section className="metrics">
             <div>
-              <span>目標G</span>
-              <strong>{targetG.toFixed(2)}</strong>
+              <span>発散角</span>
+              <strong>{divergence ? `${divergence.toFixed(2)}°` : "-"}</strong>
             </div>
             <div>
-              <span>推定発散角</span>
-              <strong>{simulation ? `${simulation.angleDegrees.toFixed(2)}°` : "..."}</strong>
+              <span>発生数</span>
+              <strong>{state ? `${state.born}/${settings.total}` : "-"}</strong>
             </div>
             <div>
               <span>螺旋数</span>
               <strong>
-                {parastichies
-                  ? `${spiralCount(parastichies.clockwise)} / ${spiralCount(
-                      parastichies.counterClockwise,
-                    )}`
-                  : simulation
-                    ? "未確定"
-                    : "..."}
+                {showSpirals ? `${spirals.right.count} / ${spirals.left.count}` : "-"}
               </strong>
             </div>
+          </section>
+
+          <div className="progress-track" aria-label="計算進捗">
+            <span style={{ width: `${progress}%` }} />
           </div>
-          <label>
-            出生間隔 T
-            <input
-              type="range"
-              min="0.01"
-              max="0.8"
-              step="0.01"
-              value={targetG}
-              onChange={(event) => setTargetG(Number(event.target.value))}
+
+          <section className="panel-section">
+            <div className="section-header">
+              <p className="section-label">parameters</p>
+              <button
+                className="text-button"
+                onClick={() => {
+                  setRunning(false);
+                  setShowSpirals(false);
+                  setState(null);
+                  setRecordedBase(null);
+                  setRecordedG05Base(null);
+                  setRecordedG014Base(null);
+                  setSettings((current) => ({
+                    ...current,
+                    initialRadius: 5,
+                    speed: 0.25,
+                    T: 2,
+                    schedule: "fixed",
+                    rampStartBorn: undefined,
+                    N: 36000,
+                    M: 15,
+                    waitMs: DEFAULT_WAIT_MS,
+                  }));
+                }}
+              >
+                G=0.1 基準
+              </button>
+            </div>
+            <NumberField
+              label="T"
+              min="0.2"
+              max="80"
+              step="0.1"
+              value={settings.T}
+              onChange={(value) => update("T", value)}
+              format={(value) => value.toFixed(2)}
             />
-            <output>目標G={targetG.toFixed(2)}</output>
-          </label>
-          <div className="button-row">
-            <button onClick={() => setTargetG(0.04)}>G 0.04</button>
-            <button onClick={() => setTargetG(0.08)}>G 0.08</button>
-            <button onClick={() => setTargetG(0.3)}>G 0.30</button>
-            <button onClick={() => setTargetG(0.8)}>G 0.80</button>
-          </div>
-          <label className="toggle">
-            <input
-              type="checkbox"
-              checked={decreasing}
-              onChange={(event) => setDecreasing(event.target.checked)}
-            />
-            <span>T を徐々に短くする（分岐図用）</span>
-          </label>
-          <div className="button-row model-actions">
-            <button onClick={run}>モデルを計算して再生</button>
+            <div className="preset-grid" aria-label="代表的なG">
+              {G_PRESETS.map((preset) => (
+                <button
+                  key={preset}
+                  className={
+                    settings.schedule === "fixed" && Math.abs(G - preset) < 0.001
+                      ? "g-preset is-active"
+                      : "g-preset"
+                  }
+                  onClick={() => applyG(preset)}
+                >
+                  G {formatGValue(preset)}
+                </button>
+              ))}
+            </div>
+            {Object.entries(SCHEDULE_PRESETS)
+              .filter(([, preset]) => !preset.requiresRecordedState)
+              .map(([key, preset]) => (
+              <button
+                key={key}
+                className={settings.schedule === key ? "schedule-preset is-active" : "schedule-preset"}
+                onClick={() => applySchedulePreset(key)}
+              >
+                {preset.label}
+              </button>
+            ))}
             <button
-              className="secondary-button"
-              disabled={!canDrawVisibleSpirals}
-              onClick={playback.drawSpirals}
+              className={settings.schedule === "g07to05" ? "schedule-preset is-active" : "schedule-preset"}
+              disabled={running || !recordedBase}
+              onClick={startFromRecordedG07}
             >
-              停止後に螺旋を描く
+              {SCHEDULE_PRESETS.g07to05.label}
             </button>
-          </div>
-          <p className="note">
-            ここでは反発エネルギーを 1/d³ とし、各ステップで円周上を探索して最小点へ新粒子を置きます。
-            遠方の粒子は出生リング付近の角度選択にほとんど効かないため、相互作用対象から外します。
-            通常は T を固定し、既存粒子は半径方向に等速度で動きます。
-            m 回前の粒子の位置は r/R₀ = 1 + mG です。
-            G が大きいほど出生間隔あたりの外向き移動が大きく、見える粒子は少なくなります。
-            分岐を見せる時だけ T を短くし、出生ごとの移流量 G を下げます。
-          </p>
-        </div>
-      </div>
-    </section>
-  );
-}
+            <button
+              className={settings.schedule === "g05to014" ? "schedule-preset is-active" : "schedule-preset"}
+              disabled={running || !recordedG05Base}
+              onClick={startFromRecordedG05}
+            >
+              {SCHEDULE_PRESETS.g05to014.label}
+            </button>
+            <button
+              className={settings.schedule === "g014to0044" ? "schedule-preset is-active" : "schedule-preset"}
+              disabled={running || !recordedG014Base}
+              onClick={startFromRecordedG014}
+            >
+              {SCHEDULE_PRESETS.g014to0044.label}
+            </button>
+            <NumberField
+              label="総数"
+              min="120"
+              max={Math.max(2400, settings.total)}
+              step="20"
+              value={settings.total}
+              onChange={(value) => update("total", value)}
+            />
+            <NumberField
+              label="M"
+              min="1"
+              max="60"
+              step="1"
+              value={settings.M}
+              onChange={(value) => update("M", value)}
+            />
+            <NumberField
+              label="wait"
+              min="16"
+              max="300"
+              step="2"
+              value={settings.waitMs}
+              onChange={(value) => update("waitMs", value)}
+              format={(value) => `${value}ms`}
+            />
+          </section>
 
-function BifurcationSection() {
-  const families = [
-    { pair: [1, 1], g: 0.92, angle: 180 },
-    { pair: [1, 2], g: 0.63, angle: 150 },
-    { pair: [2, 3], g: 0.42, angle: 144 },
-    { pair: [3, 5], g: 0.25, angle: 139 },
-    { pair: [5, 8], g: 0.15, angle: 137.9 },
-    { pair: [8, 13], g: 0.085, angle: 137.6 },
-    { pair: [13, 21], g: 0.045, angle: 137.51 },
-  ];
+          <section className="actions">
+            <button onClick={start}>
+              {(settings.schedule === "g07to05" && recordedBase) ||
+              (settings.schedule === "g05to014" && recordedG05Base) ||
+              (settings.schedule === "g014to0044" && recordedG014Base)
+                ? "接続して計算"
+                : "最初から計算"}
+            </button>
+            {running ? (
+              <button className="secondary" onClick={pause}>一時停止</button>
+            ) : (
+              <button className="secondary" disabled={!state || state.finished} onClick={resume}>
+                再開
+              </button>
+            )}
+            <button className="secondary" onClick={reset}>リセット</button>
+            <button
+              className="secondary"
+              disabled={!state || running || !points.length}
+              onClick={() => setShowSpirals(true)}
+            >
+              螺旋を描く
+            </button>
+          </section>
 
-  const width = 760;
-  const height = 360;
-  const margin = { left: 54, right: 28, top: 22, bottom: 44 };
-  const x = (g) =>
-    margin.left + (1 - g / 1.05) * (width - margin.left - margin.right);
-  const y = (angle) =>
-    margin.top + ((180 - angle) / 95) * (height - margin.top - margin.bottom);
-
-  const path = families
-    .map((point, index) => `${index === 0 ? "M" : "L"} ${x(point.g)} ${y(point.angle)}`)
-    .join(" ");
-
-  return (
-    <section id="bifurcation" className="section">
-      <div className="section-intro">
-        <p className="section-number">04</p>
-        <h2>分岐図は、どの螺旋数が選ばれるかの地図</h2>
-        <p>
-          V₀/R₀ を固定して T を短くすると、`G = V₀T/R₀` が小さくなります。
-          新しい原基はより多くの古い原基の影響を受けます。
-          そのたびに周期的な重なりを避け、螺旋数は `(i, j) → (j, i+j)` へ進みます。
-        </p>
-      </div>
-      <div className="bifurcation-card">
-        <svg viewBox={`0 0 ${width} ${height}`} className="bifurcation-svg">
-          <line x1={margin.left} y1={height - margin.bottom} x2={width - margin.right} y2={height - margin.bottom} />
-          <line x1={margin.left} y1={margin.top} x2={margin.left} y2={height - margin.bottom} />
-          <text x={margin.left} y={height - 10}>大きい G</text>
-          <text x={width - 112} y={height - 10}>小さい G</text>
-          <text x={10} y={34}>発散角</text>
-          <path className="main-branch" d={path} />
-          {families.map((point, index) => (
-            <g key={`${point.pair[0]}-${point.pair[1]}`}>
-              <circle className="branch-node" cx={x(point.g)} cy={y(point.angle)} r={6} />
-              <text className="branch-label" x={x(point.g) + 10} y={y(point.angle) - 10}>
-                {point.pair[0]}-{point.pair[1]}
-              </text>
-              {index > 1 && (
-                <path
-                  className="side-branch"
-                  d={`M ${x(point.g)} ${y(point.angle)} C ${x(point.g) - 16} ${y(point.angle) + 44}, ${x(point.g) - 54} ${y(point.angle) + 64}, ${x(point.g) - 80} ${y(point.angle) + 72}`}
-                />
-              )}
-            </g>
-          ))}
-        </svg>
-        <div className="diagram-legend">
-          <span>主枝: フィボナッチ系列へ進む安定な遷移</span>
-          <span>側枝: 初期条件によって現れる別系列</span>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function PracticeSection() {
-  return (
-    <section className="section practice-section">
-      <p className="section-number">05</p>
-      <h2>論文理論を教材として実践するための対応</h2>
-      <div className="practice-grid">
-        <div>
-          <strong>観察</strong>
-          <p>ヒマワリや松ぼっくりで左右の螺旋を数えると、隣り合うフィボナッチ数が多く現れる。</p>
-        </div>
-        <div>
-          <strong>幾何</strong>
-          <p>一定角度で粒子を打つと、黄金角付近で空間が均一に埋まり、近傍線がフィボナッチ数の螺旋を作る。</p>
-        </div>
-        <div>
-          <strong>物理モデル</strong>
-          <p>新粒子は反発が最小になる場所に生まれ、既存粒子は外へ流される。必要な制御量は `G` に集約される。</p>
-        </div>
-        <div>
-          <strong>分岐</strong>
-          <p>T を短くして `G = V₀T/R₀` が下がると、周期配置を避ける遷移が起こり、螺旋数は `(i, j) → (j, i+j)` と進む。</p>
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function App() {
-  return (
-    <>
-      <LessonHeader />
-      <main>
-        <FibonacciSection />
-        <SpiralCounterSection />
-        <ModelSection />
-        <BifurcationSection />
-        <PracticeSection />
-      </main>
-      <footer>
-        <p>
-          参考: S. Douady and Y. Couder, “Phyllotaxis as a Physical Self-Organized Growth Process,”
-          Physical Review Letters, 1992. 本サイトの図とシミュレーションは公開用に再構成したものです。
-        </p>
-      </footer>
-    </>
+          <section className="readout">
+            <div>
+              <span>T</span>
+              <strong>{currentT.toFixed(2)}</strong>
+            </div>
+            <div>
+              <span>
+                V<sub>0</sub>T
+              </span>
+              <strong>{growthPerBirth.toFixed(3)}</strong>
+            </div>
+            <div>
+              <span>ポテンシャル</span>
+              <strong>Σ 1/d^4</strong>
+            </div>
+            <div>
+              <span>表示間隔</span>
+              <strong>{settings.waitMs}ms</strong>
+            </div>
+            <div>
+              <span>黄金角</span>
+              <strong>{GOLDEN_ANGLE.toFixed(5)}°</strong>
+            </div>
+          </section>
+        </aside>
+      </section>
+    </main>
   );
 }
 
