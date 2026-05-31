@@ -4,6 +4,3 @@ dist/
 .vercel/
 .DS_Store
 npm-debug.log*
-
-# Local-only source material. Do not publish the PDFs.
-paper/

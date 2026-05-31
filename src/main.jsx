@@ -679,7 +679,7 @@ function App() {
   const text = COPY[locale];
   const [settings, setSettings] = useState(DEFAULTS);
   const [state, setState] = useState(() => createInitialState(DEFAULTS));
-  const [running, setRunning] = useState(true);
+  const [running, setRunning] = useState(false);
   const [showSpirals, setShowSpirals] = useState(false);
   const samples = useMemo(() => sampleRing(settings.N), [settings.N]);
   const currentBorn = state?.born ?? 0;
@@ -760,7 +760,7 @@ function App() {
   const reset = () => {
     setShowSpirals(false);
     setState(createInitialState(modelSettings));
-    setRunning(true);
+    setRunning(false);
   };
 
   const applyG = (targetG) => {
