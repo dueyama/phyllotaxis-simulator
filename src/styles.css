@@ -78,6 +78,35 @@ button {
   background: #fbfcf8;
 }
 
+.topbar-tools {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.language-switch {
+  display: grid;
+  grid-template-columns: repeat(2, 38px);
+  min-height: 34px;
+  border: 1px solid rgba(22, 38, 31, 0.16);
+  background: #eef3ea;
+}
+
+.language-switch button {
+  min-height: 32px;
+  background: transparent;
+  color: #526158;
+  padding: 0;
+  font-size: 0.76rem;
+  font-weight: 820;
+}
+
+.language-switch button:hover,
+.language-switch button.is-active {
+  background: #16231c;
+  color: #fbfff8;
+}
+
 .topbar p,
 .section-label {
   margin: 0;
@@ -479,6 +508,10 @@ button:disabled {
   .section-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .topbar-tools {
+    justify-content: space-between;
   }
 
   .canvas-stage {

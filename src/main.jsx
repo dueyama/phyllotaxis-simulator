@@ -9,6 +9,7 @@ const DISPLAY_RADIUS_SCALE = 0.018333333333333333;
 const PARTICLE_CULL_RADIUS = 1.2 / DISPLAY_RADIUS_SCALE;
 const DEFAULT_WAIT_MS = 16;
 const G_PRESETS = [3, 0.7, 0.5, 0.14, 0.044];
+const LANGUAGE_STORAGE_KEY = "phyllotaxis.locale";
 const COPY = {
   ja: {
     title: "葉序シミュレーター",
@@ -36,6 +37,7 @@ const COPY = {
       potential: "ポテンシャル",
       displayInterval: "表示間隔",
       goldenAngle: "黄金角",
+      language: "表示言語",
     },
   },
   en: {
@@ -64,6 +66,7 @@ const COPY = {
       potential: "Potential",
       displayInterval: "Display interval",
       goldenAngle: "Golden angle",
+      language: "Language",
     },
   },
 };
@@ -220,6 +223,29 @@ function browserLocale() {
   return languages.some((language) => language?.toLowerCase().startsWith("ja"))
     ? "ja"
     : "en";
+}
+
+function isSupportedLocale(value) {
+  return value === "ja" || value === "en";
+}
+
+function preferredLocale() {
+  if (typeof window === "undefined") return "en";
+  try {
+    const stored = window.localStorage.getItem(LANGUAGE_STORAGE_KEY);
+    if (isSupportedLocale(stored)) return stored;
+  } catch {
+    // Browser privacy settings can block localStorage; fall back to navigator.
+  }
+  return browserLocale();
+}
+
+function saveLocale(locale) {
+  try {
+    window.localStorage.setItem(LANGUAGE_STORAGE_KEY, locale);
+  } catch {
+    // The switch still works for the current session when storage is blocked.
+  }
 }
 
 function ModelDescription({ locale }) {
@@ -674,8 +700,31 @@ function statusText(state, running, showSpirals, text) {
   return text.status.paused;
 }
 
+function LanguageSwitch({ locale, onChange, label }) {
+  return (
+    <div className="language-switch" aria-label={label} role="group">
+      <button
+        type="button"
+        className={locale === "ja" ? "is-active" : ""}
+        aria-pressed={locale === "ja"}
+        onClick={() => onChange("ja")}
+      >
+        JA
+      </button>
+      <button
+        type="button"
+        className={locale === "en" ? "is-active" : ""}
+        aria-pressed={locale === "en"}
+        onClick={() => onChange("en")}
+      >
+        EN
+      </button>
+    </div>
+  );
+}
+
 function App() {
-  const locale = useMemo(() => browserLocale(), []);
+  const [locale, setLocale] = useState(() => preferredLocale());
   const text = COPY[locale];
   const [settings, setSettings] = useState(DEFAULTS);
   const [state, setState] = useState(() => createInitialState(DEFAULTS));
@@ -788,6 +837,11 @@ function App() {
     setRunning(true);
   };
 
+  const changeLocale = (nextLocale) => {
+    setLocale(nextLocale);
+    saveLocale(nextLocale);
+  };
+
   return (
     <main className="sim-app">
       <section className="workbench">
@@ -797,7 +851,14 @@ function App() {
               <p>{text.headerKicker}</p>
               <h1>{text.title}</h1>
             </div>
-            <span className={`status ${running ? "is-running" : ""}`}>{status}</span>
+            <div className="topbar-tools">
+              <LanguageSwitch
+                locale={locale}
+                onChange={changeLocale}
+                label={text.controls.language}
+              />
+              <span className={`status ${running ? "is-running" : ""}`}>{status}</span>
+            </div>
           </header>
 
           <div className="canvas-stage">
