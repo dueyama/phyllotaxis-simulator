@@ -341,6 +341,15 @@ h1 {
   line-height: 1.35;
 }
 
+.app-footer {
+  margin: 0;
+  border-top: 1px solid rgba(22, 38, 31, 0.1);
+  padding-top: 12px;
+  color: #65736a;
+  font-size: 0.72rem;
+  line-height: 1.35;
+}
+
 .section-header {
   display: flex;
   justify-content: space-between;

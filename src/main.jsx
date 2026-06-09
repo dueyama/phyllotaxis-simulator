@@ -10,6 +10,7 @@ const PARTICLE_CULL_RADIUS = 1.2 / DISPLAY_RADIUS_SCALE;
 const DEFAULT_WAIT_MS = 16;
 const G_PRESETS = [3, 0.7, 0.5, 0.14, 0.044];
 const LANGUAGE_STORAGE_KEY = "phyllotaxis.locale";
+const COPYRIGHT_TEXT = "Copyright (c) 2026 dueyama. All rights reserved.";
 const COPY = {
   ja: {
     title: "葉序シミュレーター",
@@ -1041,6 +1042,7 @@ function App() {
             [1] S. Douady and Y. Couder, “Phyllotaxis as a Physical Self-Organized Growth Process,”
             Physical Review Letters, 1992.
           </p>
+          <footer className="app-footer">{COPYRIGHT_TEXT}</footer>
         </aside>
       </section>
     </main>

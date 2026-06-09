@@ -61,3 +61,7 @@ The generated site is a static Vite build and can be deployed directly to Vercel
 
 [1] S. Douady and Y. Couder, "Phyllotaxis as a Physical Self-Organized Growth
 Process," *Physical Review Letters* **68**(13), 2098-2101, 1992.
+
+## Copyright
+
+Copyright (c) 2026 dueyama. All rights reserved.
