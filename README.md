@@ -57,6 +57,12 @@ npm run build
 
 The generated site is a static Vite build and can be deployed directly to Vercel.
 
+## Vercel Web Analytics
+
+The app includes `@vercel/analytics` so Vercel can count visitors and page views
+after deployment. Enable Web Analytics for the Vercel project from the Vercel
+dashboard, then redeploy the site.
+
 ## References
 
 [1] S. Douady and Y. Couder, "Phyllotaxis as a Physical Self-Organized Growth
