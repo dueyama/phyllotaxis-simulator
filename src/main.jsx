@@ -848,9 +848,12 @@ function App() {
       <section className="workbench">
         <div className="canvas-panel">
           <header className="topbar">
-            <div>
-              <p>{text.headerKicker}</p>
-              <h1>{text.title}</h1>
+            <div className="brand-lockup">
+              <img className="app-icon" src="/phyllotaxis-icon-192.png" alt="" aria-hidden="true" />
+              <div>
+                <p>{text.headerKicker}</p>
+                <h1>{text.title}</h1>
+              </div>
             </div>
             <div className="topbar-tools">
               <LanguageSwitch

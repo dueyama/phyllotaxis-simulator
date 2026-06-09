@@ -78,6 +78,23 @@ button {
   background: #fbfcf8;
 }
 
+.brand-lockup {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.app-icon {
+  width: 54px;
+  height: 54px;
+  border: 1px solid rgba(22, 38, 31, 0.16);
+  border-radius: 8px;
+  background: #101915;
+  box-shadow: 0 8px 18px rgba(18, 31, 25, 0.16);
+  flex: 0 0 auto;
+}
+
 .topbar-tools {
   display: flex;
   align-items: center;
@@ -517,6 +534,15 @@ button:disabled {
   .section-header {
     align-items: stretch;
     flex-direction: column;
+  }
+
+  .brand-lockup {
+    align-items: flex-start;
+  }
+
+  .app-icon {
+    width: 46px;
+    height: 46px;
   }
 
   .topbar-tools {
