@@ -57,6 +57,10 @@ npm run build
 
 The generated site is a static Vite build and can be deployed directly to Vercel.
 
+## Repository
+
+https://github.com/dueyama/phyllotaxis-simulator
+
 ## Vercel Web Analytics
 
 The app includes `@vercel/analytics` so Vercel can count visitors and page views

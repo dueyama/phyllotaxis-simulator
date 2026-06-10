@@ -358,13 +358,39 @@ h1 {
   line-height: 1.35;
 }
 
+.paper-citation a {
+  color: #1b6b50;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.paper-citation a:hover {
+  color: #0e4735;
+}
+
 .app-footer {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
   margin: 0;
   border-top: 1px solid rgba(22, 38, 31, 0.1);
   padding-top: 12px;
   color: #65736a;
   font-size: 0.72rem;
   line-height: 1.35;
+}
+
+.app-footer a {
+  color: #1b6b50;
+  font-weight: 760;
+  text-decoration: underline;
+  text-decoration-thickness: 1px;
+  text-underline-offset: 2px;
+}
+
+.app-footer a:hover {
+  color: #0e4735;
 }
 
 .section-header {

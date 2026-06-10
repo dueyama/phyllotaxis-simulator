@@ -12,6 +12,8 @@ const DEFAULT_WAIT_MS = 16;
 const G_PRESETS = [3, 0.7, 0.5, 0.14, 0.044];
 const LANGUAGE_STORAGE_KEY = "phyllotaxis.locale";
 const COPYRIGHT_TEXT = "Copyright (c) 2026 dueyama. All rights reserved.";
+const PAPER_URL = "https://link.aps.org/doi/10.1103/PhysRevLett.68.2098";
+const GITHUB_URL = "https://github.com/dueyama/phyllotaxis-simulator";
 const COPY = {
   ja: {
     title: "葉序シミュレーター",
@@ -1043,10 +1045,17 @@ function App() {
           </section>
 
           <p className="paper-citation">
-            [1] S. Douady and Y. Couder, “Phyllotaxis as a Physical Self-Organized Growth Process,”
+            <a href={PAPER_URL} target="_blank" rel="noopener noreferrer">
+              [1] S. Douady and Y. Couder, “Phyllotaxis as a Physical Self-Organized Growth Process,”
+            </a>
             Physical Review Letters, 1992.
           </p>
-          <footer className="app-footer">{COPYRIGHT_TEXT}</footer>
+          <footer className="app-footer">
+            <span>{COPYRIGHT_TEXT}</span>
+            <a href={GITHUB_URL} target="_blank" rel="noopener noreferrer">
+              GitHub
+            </a>
+          </footer>
         </aside>
       </section>
     </main>
